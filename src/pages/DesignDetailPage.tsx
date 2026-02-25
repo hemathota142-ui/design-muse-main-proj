@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { getDesignById, updateDesignTitle, deleteDesign } from "@/services/designs.service";
 import { isValidUUID } from "@/lib/utils";
+import { generateFullWorkflowPDF } from "@/utils/pdfExport";
 
 export default function DesignDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -68,6 +69,12 @@ useEffect(() => {
   }
 };
 
+  const handleDownload = () => {
+    if (!design || !user) return;
+
+    const steps = Array.isArray(design.workflow) ? design.workflow : [];
+    generateFullWorkflowPDF(steps, design.title || "Design Workflow");
+  };
 
   // Render
   if (!isValidUUID(id)) return <AppLayout>Design not found</AppLayout>;
@@ -98,9 +105,14 @@ useEffect(() => {
         </h1>
       )}
 
-      <Button variant="destructive" onClick={handleDelete} className="mb-4">
-        Delete Design
-      </Button>
+      <div className="flex flex-wrap gap-2 mb-4">
+        <Button variant="outline" onClick={handleDownload}>
+          Download PDF
+        </Button>
+        <Button variant="destructive" onClick={handleDelete}>
+          Delete Design
+        </Button>
+      </div>
 
       <p className="text-sm text-muted-foreground">Status: {design.status}</p>
       <p className="text-sm text-muted-foreground">
