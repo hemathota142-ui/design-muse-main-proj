@@ -15,6 +15,8 @@ type DesignContent = {
   status?: string;
 };
 
+const normalizeTitle = (title: string) => title.trim();
+
 const mapDesignFromDb = (design: any) => {
   if (!design) return design;
   const content = (design.content ?? {}) as DesignContent;
@@ -77,6 +79,19 @@ export const updateDesignWorkflow = async (
 
 
 export async function getMyDesigns(userId: string) {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
+  if (userId !== user.id) {
+    throw new Error("Unauthorized access");
+  }
+
   const { data, error } = await supabase
     .from("designs")
     .select("id, title, content, user_id, is_public, created_at")
@@ -100,10 +115,15 @@ export async function createDesign(payload: {
 
   if (!user) throw new Error("User not logged in");
 
+  const normalizedTitle = normalizeTitle(payload.title || "");
+  if (!normalizedTitle) {
+    throw new Error("Title is required");
+  }
+
   const { data, error } = await supabase
     .from("designs")
     .insert({
-      title: payload.title || "Untitled",
+      title: normalizedTitle,
       // Store all design content in a single JSON column to match the DB contract.
       content: {
         workflow: payload.workflow,
@@ -176,9 +196,14 @@ export const updateDesignTitle = async (
     throw new Error("Not authenticated");
   }
 
+  const normalizedTitle = normalizeTitle(title || "");
+  if (!normalizedTitle) {
+    throw new Error("Title is required");
+  }
+
   const { error } = await supabase
     .from("designs")
-    .update({ title })
+    .update({ title: normalizedTitle })
     .eq("id", id)
     .eq("user_id", user.id);
 
@@ -187,7 +212,11 @@ export const updateDesignTitle = async (
     throw error;
   }
 
-  return true;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("designs:updated"));
+  }
+
+  return normalizedTitle;
 };
 
 export const updateDesignVisibility = async (

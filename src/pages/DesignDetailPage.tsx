@@ -48,8 +48,8 @@ useEffect(() => {
     if (!design || !user) return;
 
     try {
-      await updateDesignTitle(design.id, title);
-      setDesign({ ...design, title });
+      const updatedTitle = await updateDesignTitle(design.id, title);
+      setDesign({ ...design, title: updatedTitle });
       setEditingTitle(false);
     } catch (err) {
       console.error("UPDATE FAILED", err);

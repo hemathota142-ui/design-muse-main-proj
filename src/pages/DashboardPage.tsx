@@ -43,16 +43,31 @@ export default function DashboardPage() {
 useEffect(() => {
   if (!user?.id || isGuest) return;
 
+  let isMounted = true;
+
   const loadDesigns = async () => {
     try {
       const data = await getMyDesigns(user.id);
-      setDesigns(data);
+      if (isMounted) {
+        setDesigns(data);
+      }
     } catch (err) {
       console.error("Failed to load designs", err);
     }
   };
 
   loadDesigns();
+
+  const handleDesignsUpdated = () => {
+    loadDesigns();
+  };
+
+  window.addEventListener("designs:updated", handleDesignsUpdated);
+
+  return () => {
+    isMounted = false;
+    window.removeEventListener("designs:updated", handleDesignsUpdated);
+  };
 }, [user, isGuest]);
 
 
