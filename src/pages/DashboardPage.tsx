@@ -205,7 +205,7 @@ const displayName =
             </div>
           </div>
 
-          <Link to={`/design/${design.id}`}>
+          <Link to={`/designs/${design.id}`}>
             <Button variant="ghost" size="sm">
               View
               <ArrowRight className="w-4 h-4 ml-1" />

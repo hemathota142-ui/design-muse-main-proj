@@ -71,6 +71,7 @@ useEffect(() => {
 
   // Render
   if (!isValidUUID(id)) return <AppLayout>Design not found</AppLayout>;
+  if (!user) return <AppLayout>Loading design...</AppLayout>;
   if (loading) return <AppLayout>Loading design...</AppLayout>;
   if (!design) return <AppLayout>Design not found</AppLayout>;
 
@@ -124,10 +125,30 @@ useEffect(() => {
 </ul>
 
 <h2>Workflow</h2>
-<ol>
-  {design.workflow?.map((s: any, i: number) => (
-    <li key={i}>{s.title || s}</li>
-  )) || <li>No steps</li>}
+<ol className="space-y-3">
+  {design.workflow?.length ? (
+    design.workflow.map((s: any, i: number) => (
+      <li key={i} className="border border-border rounded-lg p-3">
+        <div className="flex items-center justify-between">
+          <div className="font-medium">
+            {i + 1}. {s.title || `Step ${i + 1}`}
+          </div>
+          {typeof s.completed === "boolean" && (
+            <span className="text-xs text-muted-foreground">
+              {s.completed ? "Completed" : "Incomplete"}
+            </span>
+          )}
+        </div>
+        {s.description && (
+          <p className="text-sm text-muted-foreground mt-2">
+            {s.description}
+          </p>
+        )}
+      </li>
+    ))
+  ) : (
+    <li>No steps</li>
+  )}
 </ol>
     </AppLayout>
   );
