@@ -32,6 +32,12 @@ const mapDesignFromDb = (design: any) => {
   };
 };
 
+const notifyDesignsUpdated = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("designs:updated"));
+  }
+};
+
 
 export const updateDesignWorkflow = async (
   designId: string,
@@ -74,6 +80,7 @@ export const updateDesignWorkflow = async (
     throw error;
   }
 
+  notifyDesignsUpdated();
   return true;
 };
 
@@ -142,6 +149,7 @@ export async function createDesign(payload: {
     throw error;
   }
 
+  notifyDesignsUpdated();
   return mapDesignFromDb(data);
 }
 
@@ -212,9 +220,7 @@ export const updateDesignTitle = async (
     throw error;
   }
 
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("designs:updated"));
-  }
+  notifyDesignsUpdated();
 
   return normalizedTitle;
 };
@@ -244,6 +250,7 @@ export const updateDesignVisibility = async (
     throw error;
   }
 
+  notifyDesignsUpdated();
   return true;
 };
 
@@ -267,6 +274,8 @@ export async function deleteDesign(designId: string) {
     console.error("DELETE ERROR:", error);
     throw error;
   }
+
+  notifyDesignsUpdated();
 };
 
 

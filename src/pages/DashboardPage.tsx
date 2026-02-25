@@ -62,11 +62,19 @@ useEffect(() => {
     loadDesigns();
   };
 
+  const handleVisibilityChange = () => {
+    if (!document.hidden) {
+      loadDesigns();
+    }
+  };
+
   window.addEventListener("designs:updated", handleDesignsUpdated);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   return () => {
     isMounted = false;
     window.removeEventListener("designs:updated", handleDesignsUpdated);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
   };
 }, [user, isGuest]);
 
