@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { 
   User, 
@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
+import { getMyProfile, updateMyProfile } from "@/services/profiles.service";
+import { useToast } from "@/hooks/use-toast";
 
 const settingsSections = [
   { id: "profile", icon: User, label: "Profile" },
@@ -42,6 +44,11 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState("profile");
   const { theme, accentColor, setTheme, setAccentColor } = useTheme();
   const { user, isGuest } = useAuth();
+  const { toast } = useToast();
+  const [profileName, setProfileName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileBio, setProfileBio] = useState("");
   const [settings, setSettings] = useState({
     emailNotifications: true,
     pushNotifications: false,
@@ -49,6 +56,77 @@ export default function SettingsPage() {
     autoSave: true,
     shareAnalytics: false,
   });
+
+  useEffect(() => {
+    setProfileName(
+      user?.user_metadata?.full_name ||
+        user?.user_metadata?.display_name ||
+        user?.user_metadata?.name ||
+        ""
+    );
+    setProfileEmail(user?.email || "");
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || isGuest) return;
+    let isMounted = true;
+
+    const loadProfile = async () => {
+      try {
+        const profile = await getMyProfile();
+        if (isMounted) {
+          setProfileName(profile.full_name || "");
+          setProfileEmail(profile.email || user.email || "");
+          setProfileBio(profile.bio || "");
+        }
+      } catch (error) {
+        console.error("Failed to load profile:", error);
+      }
+    };
+
+    loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user, isGuest]);
+
+  const handleSaveProfile = async () => {
+    if (!user || isGuest) return;
+
+    const normalizedName = profileName.trim();
+    if (!normalizedName) {
+      toast({
+        title: "Name required",
+        description: "Please enter your full name.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSavingProfile(true);
+      const updated = await updateMyProfile({
+        full_name: normalizedName,
+        bio: profileBio.trim() || null,
+      });
+      setProfileName(updated.full_name || normalizedName);
+      setProfileBio(updated.bio || "");
+      toast({
+        title: "Profile updated",
+        description: "Your name has been saved.",
+      });
+    } catch (error) {
+      console.error("Failed to update profile:", error);
+      toast({
+        title: "Update failed",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   const updateSetting = (key: string, value: boolean) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -135,21 +213,31 @@ export default function SettingsPage() {
                       <div className="grid sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="name">Full Name</Label>
-                          <Input id="name" defaultValue={user?.user_metadata?.name
- || "John Designer"} />
+                          <Input
+                            id="name"
+                            value={profileName || "John Designer"}
+                            onChange={(event) => setProfileName(event.target.value)}
+                          />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="email">Email</Label>
-                          <Input id="email" type="email" defaultValue={user?.email || "john@example.com"} />
+                          <Input id="email" type="email" value={profileEmail || "john@example.com"} readOnly />
                         </div>
                       </div>
 
                       <div className="space-y-2">
                         <Label htmlFor="bio">Bio</Label>
-                        <Input id="bio" placeholder="Tell us about yourself..." />
+                        <Input
+                          id="bio"
+                          placeholder="Tell us about yourself..."
+                          value={profileBio}
+                          onChange={(event) => setProfileBio(event.target.value)}
+                        />
                       </div>
 
-                      <Button variant="gradient">Save Changes</Button>
+                      <Button variant="gradient" onClick={handleSaveProfile} disabled={isSavingProfile}>
+                        {isSavingProfile ? "Saving..." : "Save Changes"}
+                      </Button>
                     </>
                   )}
                 </CardContent>

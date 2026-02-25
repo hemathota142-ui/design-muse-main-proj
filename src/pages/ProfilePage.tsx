@@ -18,12 +18,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { getMyProfile } from "@/services/profiles.service";
 import { SavedDesign } from "@/services/designStorage";
 
 const POSTED_DESIGNS_KEY = "smartdesign_posted_designs";
 
 export default function ProfilePage() {
   const { user, isGuest } = useAuth();
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const [profileBio, setProfileBio] = useState<string | null>(null);
   const [postedDesigns, setPostedDesigns] = useState<SavedDesign[]>([]);
   const [activeTab, setActiveTab] = useState<"public" | "private">("public");
 
@@ -33,6 +36,36 @@ export default function ProfilePage() {
       setPostedDesigns(JSON.parse(stored));
     }
   }, []);
+
+  useEffect(() => {
+    if (!user || isGuest) return;
+    let isMounted = true;
+
+    const loadProfile = async () => {
+      try {
+        const profile = await getMyProfile();
+        if (isMounted) {
+          setProfileName(profile.full_name);
+          setProfileBio(profile.bio);
+        }
+      } catch (error) {
+        console.error("Failed to load profile:", error);
+      }
+    };
+
+    loadProfile();
+
+    const handleProfileUpdated = () => {
+      loadProfile();
+    };
+
+    window.addEventListener("profile:updated", handleProfileUpdated);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("profile:updated", handleProfileUpdated);
+    };
+  }, [user, isGuest]);
 
   const publicDesigns = postedDesigns.filter(d => (d as any).isPublic);
   const privateDesigns = postedDesigns.filter(d => !(d as any).isPublic);
@@ -99,9 +132,20 @@ export default function ProfilePage() {
                   <User className="w-12 h-12 text-primary" />
                 </div>
                 <div className="flex-1">
-                  <h1 className="text-2xl font-bold text-foreground">{user?.user_metadata?.name
-}</h1>
+                  <h1 className="text-2xl font-bold text-foreground">
+                    {profileName ||
+                      user?.user_metadata?.full_name ||
+                      user?.user_metadata?.display_name ||
+                      user?.user_metadata?.name ||
+                      user?.email?.split("@")[0] ||
+                      "Designer"}
+                  </h1>
                   <p className="text-muted-foreground">{user?.email}</p>
+                  {profileBio && (
+                    <p className="text-sm text-muted-foreground mt-2">
+                      {profileBio}
+                    </p>
+                  )}
                   <div className="flex items-center gap-4 mt-3">
                     <div className="flex items-center gap-1 text-sm text-muted-foreground">
                       <FolderOpen className="w-4 h-4" />

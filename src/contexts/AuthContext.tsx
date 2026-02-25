@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { User as SupabaseUser } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { upsertMyProfile } from "@/services/profiles.service";
 
 interface AuthContextType {
   user: SupabaseUser | null;
@@ -27,7 +28,13 @@ const [isGuest, setIsGuest] = useState(false);
       const { data } = await supabase.auth.getSession();
       if (!mounted) return;
 
-      setUser(data.session?.user ?? null);
+      const sessionUser = data.session?.user ?? null;
+      setUser(sessionUser);
+      if (sessionUser) {
+        upsertMyProfile(sessionUser).catch((error) => {
+          console.error("PROFILE UPSERT FAILED:", error);
+        });
+      }
       setLoading(false);
     };
 
@@ -36,7 +43,13 @@ const [isGuest, setIsGuest] = useState(false);
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      const sessionUser = session?.user ?? null;
+      setUser(sessionUser);
+      if (sessionUser) {
+        upsertMyProfile(sessionUser).catch((error) => {
+          console.error("PROFILE UPSERT FAILED:", error);
+        });
+      }
       setLoading(false);
     });
 
