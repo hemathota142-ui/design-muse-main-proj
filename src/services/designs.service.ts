@@ -9,12 +9,24 @@ const toDbIsPublic = (visibility?: "public" | "private") =>
 const fromDbIsPublic = (isPublic?: boolean | null) =>
   isPublic ? "public" : "private";
 
-const mapDesignVisibilityFromDb = (design: any) => {
+type DesignContent = {
+  workflow?: WorkflowStep[];
+  constraints?: any;
+  status?: string;
+};
+
+const mapDesignFromDb = (design: any) => {
   if (!design) return design;
+  const content = (design.content ?? {}) as DesignContent;
+
   return {
     ...design,
     // Map DB boolean to UI string without changing UI components.
     visibility: fromDbIsPublic(design.is_public),
+    // Preserve existing UI expectations by projecting content fields back to top level.
+    workflow: content.workflow ?? design.workflow,
+    constraints: content.constraints ?? design.constraints,
+    status: content.status ?? design.status,
   };
 };
 
@@ -23,10 +35,37 @@ export const updateDesignWorkflow = async (
   designId: string,
   workflow: WorkflowStep[]
 ) => {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("designs")
+    .select("content")
+    .eq("id", designId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (fetchError) {
+    console.error("SUPABASE WORKFLOW LOAD ERROR:", fetchError);
+    throw fetchError;
+  }
+
+  const nextContent: DesignContent = {
+    ...(existing?.content ?? {}),
+    workflow,
+  };
+
   const { error } = await supabase
     .from("designs")
-    .update({ workflow })
-    .eq("id", designId);
+    .update({ content: nextContent })
+    .eq("id", designId)
+    .eq("user_id", user.id);
 
   if (error) {
     console.error("SUPABASE WORKFLOW UPDATE ERROR:", error);
@@ -40,12 +79,12 @@ export const updateDesignWorkflow = async (
 export async function getMyDesigns(userId: string) {
   const { data, error } = await supabase
     .from("designs")
-    .select("*")
+    .select("id, title, content, user_id, is_public, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return data?.map(mapDesignVisibilityFromDb);
+  return data?.map(mapDesignFromDb);
 }
 
 export async function createDesign(payload: {
@@ -65,9 +104,12 @@ export async function createDesign(payload: {
     .from("designs")
     .insert({
       title: payload.title || "Untitled",
-      workflow: payload.workflow,        // MUST MATCH COLUMN NAME
-      constraints: payload.constraints,
-      status: payload.status ?? "draft",
+      // Store all design content in a single JSON column to match the DB contract.
+      content: {
+        workflow: payload.workflow,
+        constraints: payload.constraints,
+        status: payload.status ?? "draft",
+      },
       // Map UI "public"/"private" to DB `is_public` BOOLEAN.
       is_public: toDbIsPublic(payload.visibility),
       user_id: user.id,                  // REQUIRED for RLS
@@ -80,7 +122,7 @@ export async function createDesign(payload: {
     throw error;
   }
 
-  return mapDesignVisibilityFromDb(data);
+  return mapDesignFromDb(data);
 }
 
 
@@ -88,20 +130,28 @@ export async function createDesign(payload: {
 
 
 export async function getDesignById(id: string) {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("designs")
     .select(
       `
       id,
       title,
-      workflow,
-      constraints,
-      status,
+      content,
       is_public,
       created_at
       `
     )
     .eq("id", id)
+    .eq("user_id", user.id)
     .single();
 
   if (error) {
@@ -109,7 +159,7 @@ export async function getDesignById(id: string) {
     return null;
   }
 
-  return mapDesignVisibilityFromDb(data);
+  return mapDesignFromDb(data);
 }
 
 
@@ -117,10 +167,20 @@ export const updateDesignTitle = async (
   id: string,
   title: string
 ) => {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
   const { error } = await supabase
     .from("designs")
     .update({ title })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("user_id", user.id);
 
   if (error) {
     console.error("SUPABASE UPDATE ERROR:", error);
@@ -134,11 +194,21 @@ export const updateDesignVisibility = async (
   id: string,
   visibility: "public" | "private"
 ) => {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
   const { error } = await supabase
     .from("designs")
     // Map UI "public"/"private" to DB `is_public` BOOLEAN for updates.
     .update({ is_public: toDbIsPublic(visibility) })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("user_id", user.id);
 
   if (error) {
     console.error("SUPABASE VISIBILITY UPDATE ERROR:", error);
@@ -162,7 +232,7 @@ export async function deleteDesign(designId: string) {
     .from("designs")
     .delete()
     .eq("id", designId)
-    .eq("user_id", (await supabase.auth.getUser()).data.user?.id);
+    .eq("user_id", user.id);
 
   if (error) {
     console.error("DELETE ERROR:", error);
