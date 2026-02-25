@@ -1,7 +1,22 @@
 import type { WorkflowStep } from "@/types/workflow";
 import { supabase } from "@/lib/supabase";
 
+// DB assumption: the Supabase "designs" table stores visibility in `is_public` (BOOLEAN).
+// UI uses "public" | "private", so we map between the two here only.
+const toDbIsPublic = (visibility?: "public" | "private") =>
+  visibility === "public";
 
+const fromDbIsPublic = (isPublic?: boolean | null) =>
+  isPublic ? "public" : "private";
+
+const mapDesignVisibilityFromDb = (design: any) => {
+  if (!design) return design;
+  return {
+    ...design,
+    // Map DB boolean to UI string without changing UI components.
+    visibility: fromDbIsPublic(design.is_public),
+  };
+};
 
 
 export const updateDesignWorkflow = async (
@@ -30,7 +45,7 @@ export async function getMyDesigns(userId: string) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return data;
+  return data?.map(mapDesignVisibilityFromDb);
 }
 
 export async function createDesign(payload: {
@@ -53,7 +68,8 @@ export async function createDesign(payload: {
       workflow: payload.workflow,        // MUST MATCH COLUMN NAME
       constraints: payload.constraints,
       status: payload.status ?? "draft",
-      visibility: payload.visibility ?? "private",
+      // Map UI "public"/"private" to DB `is_public` BOOLEAN.
+      is_public: toDbIsPublic(payload.visibility),
       user_id: user.id,                  // REQUIRED for RLS
     })
     .select()
@@ -64,7 +80,7 @@ export async function createDesign(payload: {
     throw error;
   }
 
-  return data;
+  return mapDesignVisibilityFromDb(data);
 }
 
 
@@ -81,7 +97,7 @@ export async function getDesignById(id: string) {
       workflow,
       constraints,
       status,
-      visibility,
+      is_public,
       created_at
       `
     )
@@ -93,7 +109,7 @@ export async function getDesignById(id: string) {
     return null;
   }
 
-  return data;
+  return mapDesignVisibilityFromDb(data);
 }
 
 
@@ -108,6 +124,24 @@ export const updateDesignTitle = async (
 
   if (error) {
     console.error("SUPABASE UPDATE ERROR:", error);
+    throw error;
+  }
+
+  return true;
+};
+
+export const updateDesignVisibility = async (
+  id: string,
+  visibility: "public" | "private"
+) => {
+  const { error } = await supabase
+    .from("designs")
+    // Map UI "public"/"private" to DB `is_public` BOOLEAN for updates.
+    .update({ is_public: toDbIsPublic(visibility) })
+    .eq("id", id);
+
+  if (error) {
+    console.error("SUPABASE VISIBILITY UPDATE ERROR:", error);
     throw error;
   }
 
