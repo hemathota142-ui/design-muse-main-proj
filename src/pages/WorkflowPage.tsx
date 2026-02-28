@@ -1,8 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { WorkflowStep } from "@/types/workflow";
 import { generateStepPDF, generateFullWorkflowPDF } from "@/utils/pdfExport"; // ✅ updated
 import { useAuth } from "@/contexts/AuthContext";
+import { useDesignDraft } from "@/contexts/DesignDraftContext";
 import { createDesign, updateDesignWorkflow } from "@/services/designs.service";
+import type { Design } from "@/types/design";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, Reorder, AnimatePresence } from "framer-motion";
 import {
@@ -107,11 +109,12 @@ export default function WorkflowPage() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
 const { user, isGuest } = useAuth();
+  const { designDraft, updateDraft } = useDesignDraft();
   const concept = location.state?.concept;
   console.log("WorkflowPage concept:", concept);
-  const formData = location.state?.formData;
+  const formData = designDraft;
   
-const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(concept, formData));
+  const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(concept, formData));
   const [expandedStep, setExpandedStep] = useState<string | null>("1");
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -148,6 +151,10 @@ const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(c
     );
     setEditingStep(null);
   };
+
+  useEffect(() => {
+    updateDraft({ workflowSteps: steps });
+  }, [steps, updateDraft]);
 
   const handleDownloadStep = (step: WorkflowStep, index: number) => {
     generateStepPDF(step, index + 1);
@@ -189,16 +196,78 @@ const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(c
       savedDesign = { ...existingDesign, workflow: steps };
     } else {
       console.log("FINAL STEPS", steps);
+      const title = formData?.productName?.trim();
+      if (!title) {
+        throw new Error("Product name required");
+      }
+      const created_at = new Date().toISOString();
+      const productName = String(formData?.productName || "").trim();
+      const timeAvailable = Array.isArray(formData?.timeWeeks)
+        ? `${formData.timeWeeks[0]} weeks`
+        : "";
+      const canonicalDesign: Design = {
+        id: "pending",
+        user_id: user?.id ?? null,
+        title: productName,
+        product_name: productName,
+        product_type: String(formData?.productType || ""),
+        purpose: String(formData?.purpose || ""),
+        target_user: String(formData?.targetUser || ""),
+        environment: String(formData?.environment || ""),
+        skill_level: String(formData?.skillLevel || ""),
+        budget: typeof formData?.budget === "number" ? formData.budget : 0,
+        time_available: timeAvailable,
+        safety_constraints: String(formData?.safetyRequirements || ""),
+        materials: Array.isArray(formData?.preferredMaterials)
+          ? formData.preferredMaterials
+          : [],
+        tools: Array.isArray(formData?.availableTools) ? formData.availableTools : [],
+        sustainability: Boolean(formData?.sustainabilityPriority),
+        estimated_cost:
+          typeof concept?.estimatedCost === "number" ? concept.estimatedCost : null,
+        steps: Array.isArray(steps) ? steps : [],
+        visibility: "private",
+        created_at,
+      };
+
       savedDesign = await createDesign({
-  title: concept?.name?.trim() || "Untitled Design",
-  workflow: steps, // MUST be final steps array
-  constraints: {
-    description: formData.description,
-    materials: formData.materials,
-    tools: formData.tools,
-    notes: formData.notes,
-  },
-});
+        title,
+        workflow: steps, // MUST be final steps array
+        constraints: {
+          description:
+            typeof formData?.purpose === "string" && formData.purpose !== "undefined"
+              ? formData.purpose
+              : "",
+          materials: Array.isArray(formData?.preferredMaterials)
+            ? formData.preferredMaterials
+            : [],
+          tools: Array.isArray(formData?.availableTools)
+            ? formData.availableTools
+            : [],
+          notes:
+            typeof formData?.safetyRequirements === "string" &&
+            formData.safetyRequirements !== "undefined"
+              ? formData.safetyRequirements
+              : "",
+          productType:
+            typeof formData?.productType === "string" &&
+            formData.productType !== "undefined"
+              ? formData.productType
+              : "",
+          purpose:
+            typeof formData?.purpose === "string" && formData.purpose !== "undefined"
+              ? formData.purpose
+              : "",
+        },
+        status: "saved",
+        description:
+          typeof formData?.purpose === "string" && formData.purpose !== "undefined"
+            ? formData.purpose
+            : "",
+        feasibilityScore:
+          typeof concept?.feasibilityScore === "number" ? concept.feasibilityScore : null,
+        canonicalDesign,
+      });
 
     }
 
@@ -299,7 +368,7 @@ const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(c
                       </p>
                     </div>
                   </div>
-                  <Button variant="gradient" onClick={() => navigate("/design/optimize", { state: { concept, formData } })}>
+                  <Button variant="gradient" onClick={() => navigate("/design/optimize", { state: { concept } })}>
                     Optimize Now
                   </Button>
                 </CardContent>
@@ -526,7 +595,7 @@ const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(c
             <Button
               variant="gradient"
               className="gap-2"
-              onClick={() => navigate("/design/optimize", { state: { concept, formData } })}
+              onClick={() => navigate("/design/optimize", { state: { concept } })}
             >
               Optimize Materials
               <ArrowRight className="w-4 h-4" />

@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { DesignDraftProvider } from "@/contexts/DesignDraftContext";
 
 // Pages
 import LandingPage from "./pages/LandingPage";
@@ -46,10 +47,11 @@ const App = () => {
 return (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
+      <DesignDraftProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
           <Routes>
   {/* Public Routes */}
   <Route path="/" element={<LandingPage />} />
@@ -176,8 +178,9 @@ return (
   <Route path="*" element={<NotFound />} />
 </Routes>
 
-        </BrowserRouter>
-      </TooltipProvider>
+          </BrowserRouter>
+        </TooltipProvider>
+      </DesignDraftProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

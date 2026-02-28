@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Brain, Sparkles, Cpu, BarChart3, Lightbulb } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
@@ -14,7 +14,6 @@ const analysisSteps = [
 
 export default function AIAnalysisPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [progress, setProgress] = useState(0);
 
@@ -45,11 +44,11 @@ export default function AIAnalysisPage() {
   useEffect(() => {
     if (progress === 100) {
       const timer = setTimeout(() => {
-        navigate("/design/concepts", { state: location.state });
+        navigate("/design/concepts");
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [progress, navigate, location.state]);
+  }, [progress, navigate]);
 
   const currentStep = analysisSteps[currentStepIndex];
 

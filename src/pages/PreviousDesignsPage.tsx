@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   Search, 
@@ -30,46 +30,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { designStorage, SavedDesign, downloadDesignJSON } from "@/services/designStorage";
+import { SavedDesign, downloadDesignJSON } from "@/services/designStorage";
 import { useToast } from "@/hooks/use-toast";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
-
-// Demo designs for users without saved designs
-const demoDesigns: SavedDesign[] = [
-  {
-    id: "demo1",
-    name: "Portable Solar Charger",
-    timestamp: Date.now() - 86400000 * 5,
-    data: {
-      productType: "Consumer Electronics",
-      purpose: "Compact solar-powered device for outdoor charging",
-    },
-    version: 2,
-    userId: "demo",
-  },
-  {
-    id: "demo2",
-    name: "Ergonomic Desk Stand",
-    timestamp: Date.now() - 86400000 * 8,
-    data: {
-      productType: "Furniture",
-      purpose: "Adjustable laptop stand for better posture",
-    },
-    version: 1,
-    userId: "demo",
-  },
-  {
-    id: "demo3",
-    name: "Smart Plant Pot",
-    timestamp: Date.now() - 86400000 * 12,
-    data: {
-      productType: "Home Decor",
-      purpose: "IoT-enabled plant pot with automatic watering",
-    },
-    version: 1,
-    userId: "demo",
-  },
-];
+import { getMyDesigns, deleteDesign } from "@/services/designs.service";
 
 const filterOptions = ["All", "Recent", "Oldest"];
 const sortOptions = [
@@ -80,38 +44,75 @@ const sortOptions = [
 ];
 
 export default function PreviousDesignsPage() {
+  const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("newest");
-  const [designs, setDesigns] = useState<SavedDesign[]>([]);
+  const [designs, setDesigns] = useState<(SavedDesign & { source: "local" | "remote" })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
 
-  // Load designs from storage
+  const mapRemoteDesign = (design: any): SavedDesign & { source: "remote" } => {
+    const canonical = design?.canonicalDesign ?? design?.content?.design ?? null;
+    const constraints = design?.constraints ?? {};
+    const safeText = (value: any) =>
+      typeof value === "string" && value !== "undefined" ? value : "";
+
+    const productType =
+      safeText(canonical?.product_type) ||
+      safeText(constraints.productType) ||
+      safeText(constraints.product_type) ||
+      safeText(constraints.type) ||
+      "";
+    const purpose =
+      safeText(canonical?.purpose) ||
+      safeText(constraints.purpose) ||
+      safeText(constraints.description);
+
+    return {
+      id: design.id,
+      name:
+        typeof canonical?.title === "string"
+          ? canonical.title
+          : typeof design.title === "string"
+            ? design.title
+            : "",
+      timestamp: design.created_at ? new Date(design.created_at).getTime() : Date.now(),
+      data: {
+        productType,
+        purpose,
+      },
+      version: 1,
+      userId: design.user_id || "",
+      source: "remote",
+    };
+  };
+
+  // Load designs from Supabase (authenticated)
   useEffect(() => {
     const loadDesigns = async () => {
-      if (!user) {
-        setDesigns(demoDesigns);
-        setIsLoading(false);
-        return;
-      }
-
       try {
-        const savedDesigns = await designStorage.getAll(user.id);
-        setDesigns(savedDesigns.length > 0 ? savedDesigns : demoDesigns);
+        if (!user || isGuest) {
+          setDesigns([]);
+          return;
+        }
+
+        const remoteDesigns = await getMyDesigns(user.id);
+        const mapped = (remoteDesigns || []).map(mapRemoteDesign);
+        setDesigns(mapped);
       } catch (error) {
         console.error("Failed to load designs:", error);
-        setDesigns(demoDesigns);
+        setDesigns([]);
       } finally {
         setIsLoading(false);
       }
     };
 
     loadDesigns();
-  }, [user]);
+  }, [user, isGuest]);
 
   // Filter and sort designs
   const filteredDesigns = designs
@@ -142,7 +143,7 @@ export default function PreviousDesignsPage() {
     });
 
   const handleDelete = async (id: string) => {
-    if (isGuest) {
+    if (isGuest || !user) {
       toast({
         title: "Guest users cannot delete",
         description: "Sign up to save and manage your designs.",
@@ -152,11 +153,11 @@ export default function PreviousDesignsPage() {
     }
 
     try {
-      await designStorage.delete(id);
+      await deleteDesign(id);
       setDesigns((prev) => prev.filter((d) => d.id !== id));
       toast({
         title: "Design deleted",
-        description: "The design has been removed.",
+        description: "The design has been removed from the database.",
       });
     } catch (error) {
       toast({
@@ -168,11 +169,19 @@ export default function PreviousDesignsPage() {
   };
 
   const handleDuplicate = async (design: SavedDesign) => {
-    if (isGuest) {
+    if (isGuest || !user) {
       toast({
         title: "Guest users cannot duplicate",
         description: "Sign up to save and manage your designs.",
         variant: "destructive",
+      });
+      return;
+    }
+
+    if ((design as any).source === "remote") {
+      toast({
+        title: "Not available yet",
+        description: "Duplicate is not available for cloud designs yet.",
       });
       return;
     }
@@ -187,8 +196,7 @@ export default function PreviousDesignsPage() {
     };
 
     try {
-      await designStorage.save(duplicate);
-      setDesigns((prev) => [duplicate, ...prev]);
+      setDesigns((prev) => [{ ...duplicate, source: "local" }, ...prev]);
       toast({
         title: "Design duplicated",
         description: "A copy has been created.",
@@ -236,8 +244,8 @@ export default function PreviousDesignsPage() {
                 Browse and manage all your product designs
               </p>
             </div>
-            <GuidedTooltip 
-              content="Your saved designs are stored locally in your browser. Export them as JSON to keep a backup!" 
+            <GuidedTooltip
+              content="Your designs are stored securely in Supabase."
               variant="help"
             />
           </div>
@@ -255,7 +263,7 @@ export default function PreviousDesignsPage() {
             className="p-4 rounded-xl bg-warning/10 border border-warning/20"
           >
             <p className="text-sm text-warning-foreground">
-              <strong>Guest Mode:</strong> Your designs won't be saved. Sign up to save your work!
+              <strong>Guest Mode:</strong> Sign up to save your designs.
             </p>
           </motion.div>
         )}
@@ -382,7 +390,7 @@ export default function PreviousDesignsPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => navigate(`/designs/${design.id}`)}>
                                 <Eye className="w-4 h-4 mr-2" />
                                 View
                               </DropdownMenuItem>
@@ -464,7 +472,13 @@ export default function PreviousDesignsPage() {
                             <Download className="w-4 h-4 mr-1" />
                             Export
                           </Button>
-                          <Button variant="ghost" size="sm">View</Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => navigate(`/designs/${design.id}`)}
+                          >
+                            View
+                          </Button>
                         </div>
                       </>
                     )}

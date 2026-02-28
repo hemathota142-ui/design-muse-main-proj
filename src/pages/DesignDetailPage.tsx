@@ -1,4 +1,4 @@
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Input } from "@/components/ui/input";
@@ -10,12 +10,11 @@ import { generateFullWorkflowPDF } from "@/utils/pdfExport";
 
 export default function DesignDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [design, setDesign] = useState<any>(location.state?.design || null);
-  const [loading, setLoading] = useState(!location.state?.design);
+  const [design, setDesign] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
 const [title, setTitle] = useState(design?.title || "");
 useEffect(() => {
@@ -76,6 +75,16 @@ useEffect(() => {
     generateFullWorkflowPDF(steps, design.title || "Design Workflow");
   };
 
+  const canonical = design?.canonicalDesign ?? design?.content?.design ?? null;
+  const steps = Array.isArray(design?.workflow) ? design.workflow : [];
+  const formatEffortClass = (effort: string) => {
+    const value = (effort || "").toLowerCase();
+    if (value === "low") return "bg-green-100 text-green-800";
+    if (value === "medium") return "bg-amber-100 text-amber-800";
+    if (value === "high") return "bg-red-100 text-red-800";
+    return "bg-gray-100 text-gray-600";
+  };
+
   // Render
   if (!isValidUUID(id)) return <AppLayout>Design not found</AppLayout>;
   if (!user) return <AppLayout>Loading design...</AppLayout>;
@@ -84,6 +93,7 @@ useEffect(() => {
 
   return (
     <AppLayout>
+      <div className="font-[system-ui]">
       {editingTitle ? (
         <div className="flex gap-2 mb-4">
           <Input
@@ -94,15 +104,20 @@ useEffect(() => {
           <Button onClick={handleUpdateTitle}>Save</Button>
         </div>
       ) : (
-        <h1
-          className="text-2xl font-bold cursor-pointer mb-4"
-          onClick={() => {
-            setTitle(design.title);
-            setEditingTitle(true);
-          }}
-        >
-          {design.title}
-        </h1>
+        <div className="text-center border-b-2 border-teal-600 pb-6 mb-6">
+          <h1
+            className="text-[28px] font-bold cursor-pointer"
+            onClick={() => {
+              setTitle(design.title);
+              setEditingTitle(true);
+            }}
+          >
+            {design.title}
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Manufacturing Workflow - {steps.length} Steps
+          </p>
+        </div>
       )}
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -114,54 +129,81 @@ useEffect(() => {
         </Button>
       </div>
 
-      <p className="text-sm text-muted-foreground">Status: {design.status}</p>
-      <p className="text-sm text-muted-foreground">
-        Created at: {new Date(design.created_at).toLocaleString()}
-      </p>
-
-     <h2>Description</h2>
-<p>{design.constraints?.description || "No description"}</p>
-
-<h2>Materials</h2>
-<ul>
-  {design.constraints?.materials?.map((m: string, i: number) => (
-    <li key={i}>{m}</li>
-  )) || <li>None</li>}
-</ul>
-
-<h2>Tools</h2>
-<ul>
-  {design.constraints?.tools?.map((t: string, i: number) => (
-    <li key={i}>{t}</li>
-  )) || <li>None</li>}
-</ul>
-
-<h2>Workflow</h2>
-<ol className="space-y-3">
-  {design.workflow?.length ? (
-    design.workflow.map((s: any, i: number) => (
-      <li key={i} className="border border-border rounded-lg p-3">
-        <div className="flex items-center justify-between">
-          <div className="font-medium">
-            {i + 1}. {s.title || `Step ${i + 1}`}
+      {canonical && (
+        <div className="mb-6 grid gap-3 md:grid-cols-2">
+          <div className="rounded-[12px] border border-[#e5e7eb] p-4">
+            <p className="text-xs uppercase text-slate-500">Product</p>
+            <p className="text-base font-semibold">
+              {canonical.product_name || canonical.title || "Untitled"}
+            </p>
+            <p className="text-sm text-slate-500">
+              {canonical.product_type || "Unknown type"}
+            </p>
           </div>
-          {typeof s.completed === "boolean" && (
-            <span className="text-xs text-muted-foreground">
-              {s.completed ? "Completed" : "Incomplete"}
-            </span>
-          )}
+          <div className="rounded-[12px] border border-[#e5e7eb] p-4">
+            <p className="text-xs uppercase text-slate-500">Estimated Cost</p>
+            <p className="text-base font-semibold">
+              {typeof canonical.estimated_cost === "number"
+                ? `â‚¹${canonical.estimated_cost.toLocaleString()}`
+                : "N/A"}
+            </p>
+            <p className="text-sm text-slate-500">
+              Time: {canonical.time_available || "N/A"}
+            </p>
+          </div>
+          <div className="rounded-[12px] border border-[#e5e7eb] p-4 md:col-span-2">
+            <p className="text-xs uppercase text-slate-500">Materials</p>
+            {Array.isArray(canonical.materials) && canonical.materials.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {canonical.materials.map((material: string) => (
+                  <span
+                    key={material}
+                    className="rounded-full bg-teal-50 px-3 py-1 text-xs font-medium text-teal-700"
+                  >
+                    {material}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">No materials listed</p>
+            )}
+          </div>
         </div>
-        {s.description && (
-          <p className="text-sm text-muted-foreground mt-2">
-            {s.description}
-          </p>
-        )}
-      </li>
-    ))
-  ) : (
-    <li>No steps</li>
-  )}
-</ol>
+      )}
+
+      {steps.length ? (
+        <div className="space-y-6">
+          {steps.map((step: any, index: number) => (
+            <div key={step.id || index} className="border border-[#e5e7eb] rounded-[12px] p-5">
+              <div className="flex items-center gap-4 mb-3">
+                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-teal-600 text-white text-sm font-bold">
+                  {index + 1}
+                </span>
+                <h3 className="text-[18px] font-semibold flex-1">{step.title}</h3>
+                <span className="text-sm text-slate-500">{step.duration}</span>
+                <span
+                  className={`text-xs px-3 py-1 rounded-full font-medium ${formatEffortClass(
+                    step.effort
+                  )}`}
+                >
+                  {step.effort}
+                </span>
+              </div>
+              <p className="text-[14px] text-[#4b5563]">{step.description}</p>
+              {step.safetyNote ? (
+                <div className="mt-[15px] rounded-lg bg-amber-100 text-[#92400e] text-sm px-3 py-2">
+                  <strong>⚠️ Safety:</strong> {step.safetyNote}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          This design was created before workflow tracking.
+        </p>
+      )}
+      </div>
     </AppLayout>
   );
 }

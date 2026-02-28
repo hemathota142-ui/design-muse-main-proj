@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Send, 
@@ -16,6 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { getMyDesigns } from "@/services/designs.service";
+import { useLocation } from "react-router-dom";
 
 interface Message {
   id: string;
@@ -24,60 +26,78 @@ interface Message {
   timestamp: Date;
 }
 
-// Offline AI suggestions based on keywords
-const aiResponses: Record<string, string[]> = {
-  material: [
-    "For durability, consider aluminum or stainless steel. They offer excellent strength-to-weight ratios.",
-    "If sustainability is a priority, look into bamboo, recycled plastics, or cork-based materials.",
-    "For budget-friendly options, ABS plastic or MDF wood are great choices with good machinability."
-  ],
-  budget: [
-    "To reduce costs, consider using modular designs that minimize waste during manufacturing.",
-    "Local sourcing can save 15-30% on material costs compared to imported alternatives.",
-    "3D printing for prototypes can significantly reduce initial development costs."
-  ],
-  design: [
-    "Focus on user ergonomics - products that feel natural to use have higher adoption rates.",
-    "Consider designing for disassembly to make repairs easier and improve sustainability.",
-    "Minimize the number of unique parts to reduce manufacturing complexity and costs."
-  ],
-  electronics: [
-    "Use modular PCB designs for easier troubleshooting and future upgrades.",
-    "Consider USB-C as the primary connector for broader compatibility.",
-    "For battery-powered devices, prioritize sleep modes to extend battery life."
-  ],
-  sustainability: [
-    "Choose materials that can be recycled at end-of-life to reduce environmental impact.",
-    "Consider using bio-based plastics as alternatives to petroleum-based options.",
-    "Design for longevity - products that last longer have lower lifetime environmental impact."
-  ],
-  default: [
-    "I can help you with material selection, budget optimization, design principles, and sustainability tips!",
-    "Try asking about specific materials, cost-saving strategies, or eco-friendly alternatives.",
-    "Need help optimizing your design? Share your product type and constraints!"
-  ]
-};
+const pickOne = (items: string[]) =>
+  items[Math.floor(Math.random() * items.length)];
 
-const getAIResponse = (input: string): string => {
+const buildResponse = (input: string, context: {
+  currentTitle?: string;
+  lastTitles: string[];
+  avgFeasibility: number | null;
+  lastFeasibility: number | null;
+}) => {
   const lowerInput = input.toLowerCase();
-  
+  const titleHint = context.currentTitle || context.lastTitles[0] || "this design";
+  const feasibilityHint =
+    typeof context.lastFeasibility === "number"
+      ? `${context.lastFeasibility}%`
+      : context.avgFeasibility !== null
+        ? `${context.avgFeasibility}%`
+        : null;
+
+  const base = [
+    `For ${titleHint}, focus on the highest-risk step first and validate it with a quick prototype.`,
+    `If you’re refining ${titleHint}, reduce part count and standardize fasteners to simplify assembly.`,
+    `Consider a modular split for ${titleHint} so future revisions don’t force a full redesign.`
+  ];
+
   if (lowerInput.includes("material") || lowerInput.includes("wood") || lowerInput.includes("metal") || lowerInput.includes("plastic")) {
-    return aiResponses.material[Math.floor(Math.random() * aiResponses.material.length)];
+    const materialTips = [
+      `For ${titleHint}, compare aluminum vs. ABS for weight and cost—prototype both for fit.`,
+      `If durability is key for ${titleHint}, consider stainless steel or glass-filled nylon.`,
+      `For a lower-cost build of ${titleHint}, evaluate MDF or ABS with reinforcing ribs.`
+    ];
+    return pickOne(materialTips);
   }
+
   if (lowerInput.includes("budget") || lowerInput.includes("cost") || lowerInput.includes("cheap") || lowerInput.includes("price")) {
-    return aiResponses.budget[Math.floor(Math.random() * aiResponses.budget.length)];
+    const budgetTips = [
+      `Reduce cost on ${titleHint} by minimizing unique parts and reusing common components.`,
+      `For ${titleHint}, target one process (e.g., sheet cutting) to keep tooling simple.`,
+      `If ${titleHint} needs a lower BOM, swap to off‑the‑shelf fasteners and standard sizes.`
+    ];
+    return pickOne(budgetTips);
   }
-  if (lowerInput.includes("design") || lowerInput.includes("ergonomic") || lowerInput.includes("user")) {
-    return aiResponses.design[Math.floor(Math.random() * aiResponses.design.length)];
+
+  if (lowerInput.includes("electronics") || lowerInput.includes("battery") || lowerInput.includes("circuit") || lowerInput.includes("pcb")) {
+    const electronicsTips = [
+      `For ${titleHint}, keep the PCB modular so you can swap power stages without re-layout.`,
+      `If ${titleHint} is battery-powered, prioritize sleep modes and test idle draw early.`,
+      `Use a single connector standard (USB‑C or JST) across ${titleHint} to simplify sourcing.`
+    ];
+    return pickOne(electronicsTips);
   }
-  if (lowerInput.includes("electronic") || lowerInput.includes("battery") || lowerInput.includes("circuit") || lowerInput.includes("pcb")) {
-    return aiResponses.electronics[Math.floor(Math.random() * aiResponses.electronics.length)];
-  }
+
   if (lowerInput.includes("eco") || lowerInput.includes("green") || lowerInput.includes("sustain") || lowerInput.includes("recycle")) {
-    return aiResponses.sustainability[Math.floor(Math.random() * aiResponses.sustainability.length)];
+    const sustainabilityTips = [
+      `Design ${titleHint} for disassembly so parts can be replaced and recycled easily.`,
+      `For ${titleHint}, choose mono‑material parts where possible to improve recyclability.`,
+      `If feasible, use recycled plastics or bamboo panels for ${titleHint} to lower impact.`
+    ];
+    return pickOne(sustainabilityTips);
   }
-  
-  return aiResponses.default[Math.floor(Math.random() * aiResponses.default.length)];
+
+  if (lowerInput.includes("feasibility") || lowerInput.includes("risk") || lowerInput.includes("validate")) {
+    if (feasibilityHint) {
+      return `Your recent feasibility signal is ${feasibilityHint}. Focus on the lowest‑confidence step and prototype it first.`;
+    }
+    return `Focus on the riskiest step in ${titleHint} and validate it with a quick prototype.`;
+  }
+
+  const contextLine = feasibilityHint
+    ? `Recent feasibility: ${feasibilityHint}.`
+    : `I can tailor tips using your recent designs.`;
+
+  return `${pickOne(base)} ${contextLine}`;
 };
 
 const quickPrompts = [
@@ -90,6 +110,9 @@ const quickPrompts = [
 
 export default function AISuggestionsPage() {
   const { user } = useAuth();
+  const location = useLocation();
+  const [designs, setDesigns] = useState<any[]>([]);
+  const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -105,8 +128,62 @@ export default function AISuggestionsPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!user?.id) return;
+    let isMounted = true;
+    const loadDesigns = async () => {
+      try {
+        setIsLoadingContext(true);
+        const data = await getMyDesigns(user.id);
+        if (isMounted) {
+          setDesigns(data || []);
+        }
+      } catch (error) {
+        console.error("Failed to load designs for AI context", error);
+      } finally {
+        if (isMounted) setIsLoadingContext(false);
+      }
+    };
+
+    loadDesigns();
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const context = useMemo(() => {
+    const currentTitle =
+      typeof location.state?.title === "string" && location.state.title.trim()
+        ? location.state.title.trim()
+        : typeof location.state?.design?.title === "string"
+          ? location.state.design.title.trim()
+          : undefined;
+    const lastTitles = designs
+      .map((design) => design?.title)
+      .filter((title: any) => typeof title === "string" && title.trim())
+      .slice(0, 3);
+    const feasibilityValues = designs
+      .map((design) => design?.feasibilityScore)
+      .filter((value: any) => typeof value === "number") as number[];
+    const avgFeasibility = feasibilityValues.length
+      ? Math.round(
+          feasibilityValues.reduce((sum, value) => sum + value, 0) /
+            feasibilityValues.length
+        )
+      : null;
+    const lastFeasibility =
+      feasibilityValues.length > 0 ? feasibilityValues[0] : null;
+
+    return {
+      currentTitle,
+      lastTitles,
+      avgFeasibility,
+      lastFeasibility,
+    };
+  }, [designs, location.state]);
 
   const handleSend = async () => {
     if (!inputValue.trim()) return;
@@ -128,7 +205,7 @@ export default function AISuggestionsPage() {
     const aiResponse: Message = {
       id: `ai_${Date.now()}`,
       role: "assistant",
-      content: getAIResponse(inputValue),
+      content: buildResponse(inputValue, context),
       timestamp: new Date()
     };
 
@@ -178,7 +255,7 @@ export default function AISuggestionsPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.1 }}
-          className="flex flex-wrap gap-2 mb-4"
+          className="flex flex-wrap items-center gap-2 mb-4"
         >
           {quickPrompts.map((prompt) => (
             <button
@@ -190,6 +267,11 @@ export default function AISuggestionsPage() {
               {prompt}
             </button>
           ))}
+          <span className="text-xs text-muted-foreground ml-auto">
+            {isLoadingContext
+              ? "Context: loading…"
+              : `Context: ${designs.length} designs${context.avgFeasibility !== null ? ` • Avg feasibility ${context.avgFeasibility}%` : ""}`}
+          </span>
         </motion.div>
 
         {/* Chat Messages */}
@@ -284,7 +366,9 @@ export default function AISuggestionsPage() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2 text-center">
-                💡 This AI runs fully offline with pre-programmed responses
+                {isLoadingContext
+                  ? "Loading your design context..."
+                  : "Suggestions adapt to your designs and recent feasibility."}
               </p>
             </div>
           </CardContent>

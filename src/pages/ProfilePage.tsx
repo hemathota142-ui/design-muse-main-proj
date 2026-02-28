@@ -19,23 +19,43 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { getMyProfile } from "@/services/profiles.service";
-import { SavedDesign } from "@/services/designStorage";
-
-const POSTED_DESIGNS_KEY = "smartdesign_posted_designs";
+import { deleteDesign, getMyDesigns, updateDesignVisibility } from "@/services/designs.service";
 
 export default function ProfilePage() {
   const { user, isGuest } = useAuth();
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileBio, setProfileBio] = useState<string | null>(null);
-  const [postedDesigns, setPostedDesigns] = useState<SavedDesign[]>([]);
+  const [postedDesigns, setPostedDesigns] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"public" | "private">("public");
 
   useEffect(() => {
-    const stored = localStorage.getItem(POSTED_DESIGNS_KEY);
-    if (stored) {
-      setPostedDesigns(JSON.parse(stored));
-    }
-  }, []);
+    if (!user || isGuest) return;
+    let isMounted = true;
+
+    const loadDesigns = async () => {
+      try {
+        const data = await getMyDesigns(user.id);
+        if (isMounted) {
+          setPostedDesigns(data || []);
+        }
+      } catch (error) {
+        console.error("Failed to load designs:", error);
+      }
+    };
+
+    loadDesigns();
+
+    const handleDesignsUpdated = () => {
+      loadDesigns();
+    };
+
+    window.addEventListener("designs:updated", handleDesignsUpdated);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("designs:updated", handleDesignsUpdated);
+    };
+  }, [user, isGuest]);
 
   useEffect(() => {
     if (!user || isGuest) return;
@@ -67,26 +87,41 @@ export default function ProfilePage() {
     };
   }, [user, isGuest]);
 
-  const publicDesigns = postedDesigns.filter(d => (d as any).isPublic);
-  const privateDesigns = postedDesigns.filter(d => !(d as any).isPublic);
+  const publicDesigns = postedDesigns.filter((d) => d.visibility === "public");
+  const privateDesigns = postedDesigns.filter((d) => d.visibility !== "public");
+  const feasibilityValues = postedDesigns
+    .map((d) => d.feasibilityScore)
+    .filter((value: any) => typeof value === "number") as number[];
+  const avgFeasibility = feasibilityValues.length
+    ? Math.round(
+        feasibilityValues.reduce((sum, value) => sum + value, 0) /
+          feasibilityValues.length
+      )
+    : 0;
 
   const displayedDesigns = activeTab === "public" ? publicDesigns : privateDesigns;
 
-  const handleDelete = (id: string) => {
-    const updated = postedDesigns.filter(d => d.id !== id);
-    setPostedDesigns(updated);
-    localStorage.setItem(POSTED_DESIGNS_KEY, JSON.stringify(updated));
+  const handleDelete = async (id: string) => {
+    if (!user || isGuest) return;
+    try {
+      await deleteDesign(id);
+      setPostedDesigns((prev) => prev.filter((d) => d.id !== id));
+    } catch (error) {
+      console.error("Failed to delete design:", error);
+    }
   };
 
-  const toggleVisibility = (id: string) => {
-    const updated = postedDesigns.map(d => {
-      if (d.id === id) {
-        return { ...d, isPublic: !(d as any).isPublic };
-      }
-      return d;
-    });
-    setPostedDesigns(updated);
-    localStorage.setItem(POSTED_DESIGNS_KEY, JSON.stringify(updated));
+  const toggleVisibility = async (id: string, current: "public" | "private") => {
+    if (!user || isGuest) return;
+    const next = current === "public" ? "private" : "public";
+    try {
+      await updateDesignVisibility(id, next);
+      setPostedDesigns((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, visibility: next } : d))
+      );
+    } catch (error) {
+      console.error("Failed to update visibility:", error);
+    }
   };
 
   const formatDate = (timestamp: number) => {
@@ -203,8 +238,10 @@ export default function ProfilePage() {
                 <TrendingUp className="w-6 h-6 text-warning" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">85%</p>
-                <p className="text-sm text-muted-foreground">Avg Feasibility</p>
+                        <p className="text-2xl font-bold text-foreground">
+                          {avgFeasibility ? `${avgFeasibility}%` : "0%"}
+                        </p>
+                        <p className="text-sm text-muted-foreground">Avg Feasibility</p>
               </div>
             </CardContent>
           </Card>
@@ -261,24 +298,31 @@ export default function ProfilePage() {
                         <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                           <FolderOpen className="w-5 h-5 text-primary" />
                         </div>
-                        <span className={cn(
-                          "px-2 py-1 rounded-full text-xs",
-                          (design as any).isPublic 
-                            ? "bg-success/10 text-success" 
-                            : "bg-muted text-muted-foreground"
-                        )}>
-                          {(design as any).isPublic ? "Public" : "Private"}
+                        <span
+                          className={cn(
+                            "px-2 py-1 rounded-full text-xs",
+                            design.visibility === "public"
+                              ? "bg-success/10 text-success"
+                              : "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {design.visibility === "public" ? "Public" : "Private"}
                         </span>
                       </div>
                       
-                      <h3 className="font-semibold text-foreground mb-1">{design.name}</h3>
+                      <h3 className="font-semibold text-foreground mb-1">
+                        {design.canonicalDesign?.title || design.title}
+                      </h3>
                       <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-                        {design.data.purpose || design.data.productType}
+                        {design.canonicalDesign?.purpose ||
+                          design.constraints?.purpose ||
+                          design.constraints?.productType ||
+                          ""}
                       </p>
 
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
                         <Clock className="w-3 h-3" />
-                        {formatDate(design.timestamp)}
+                        {formatDate(new Date(design.created_at).getTime())}
                       </div>
 
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -289,9 +333,13 @@ export default function ProfilePage() {
                         <Button 
                           size="sm" 
                           variant="ghost"
-                          onClick={() => toggleVisibility(design.id)}
+                          onClick={() => toggleVisibility(design.id, design.visibility)}
                         >
-                          {(design as any).isPublic ? <Lock className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
+                          {design.visibility === "public" ? (
+                            <Lock className="w-3 h-3" />
+                          ) : (
+                            <Globe className="w-3 h-3" />
+                          )}
                         </Button>
                         <Button 
                           size="sm" 

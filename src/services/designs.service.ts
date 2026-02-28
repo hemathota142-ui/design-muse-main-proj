@@ -13,6 +13,8 @@ type DesignContent = {
   workflow?: WorkflowStep[];
   constraints?: any;
   status?: string;
+  feasibilityScore?: number | null;
+  design?: any;
 };
 
 const normalizeTitle = (title: string) => title.trim();
@@ -20,21 +22,59 @@ const normalizeTitle = (title: string) => title.trim();
 const mapDesignFromDb = (design: any) => {
   if (!design) return design;
   const content = (design.content ?? {}) as DesignContent;
+  const canonicalDesign = content.design ?? null;
+
+  const visibility =
+    typeof design.visibility === "string"
+      ? design.visibility
+      : fromDbIsPublic(design.is_public);
 
   return {
     ...design,
     // Map DB boolean to UI string without changing UI components.
-    visibility: fromDbIsPublic(design.is_public),
-    // Preserve existing UI expectations by projecting content fields back to top level.
-    workflow: content.workflow ?? design.workflow,
+    visibility,
+    // Canonical source for workflow is designs.workflow.
+    workflow:
+      design.workflow ??
+      content.workflow ??
+      (Array.isArray(canonicalDesign?.steps) ? canonicalDesign.steps : []),
     constraints: content.constraints ?? design.constraints,
     status: content.status ?? design.status,
+    feasibilityScore:
+      content.feasibilityScore ??
+      design.feasibility_score ??
+      design.feasibilityScore ??
+      null,
+    canonicalDesign: canonicalDesign
+      ? { ...canonicalDesign, visibility: canonicalDesign.visibility ?? visibility }
+      : null,
   };
 };
 
 const notifyDesignsUpdated = () => {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("designs:updated"));
+  }
+};
+
+const migrateWorkflowIfNeeded = async (design: any, userId: string) => {
+  if (!design || !userId) return;
+  const hasWorkflow = Array.isArray(design.workflow) && design.workflow.length > 0;
+  const contentWorkflow = (design.content ?? {}).workflow;
+  const shouldMigrate = !hasWorkflow && Array.isArray(contentWorkflow) && contentWorkflow.length > 0;
+
+  if (!shouldMigrate) return;
+
+  const { error } = await supabase
+    .from("designs")
+    .update({ workflow: contentWorkflow })
+    .eq("id", design.id)
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("WORKFLOW MIGRATION ERROR:", error);
+  } else {
+    design.workflow = contentWorkflow;
   }
 };
 
@@ -64,9 +104,13 @@ export const updateDesignWorkflow = async (
     throw fetchError;
   }
 
+  const prevContent = (existing?.content ?? {}) as DesignContent;
   const nextContent: DesignContent = {
-    ...(existing?.content ?? {}),
+    ...prevContent,
     workflow,
+    design: prevContent.design
+      ? { ...prevContent.design, steps: workflow }
+      : prevContent.design,
   };
 
   const { error } = await supabase
@@ -101,11 +145,16 @@ export async function getMyDesigns(userId: string) {
 
   const { data, error } = await supabase
     .from("designs")
-    .select("id, title, content, user_id, is_public, created_at")
+    .select(
+      "id, title, description, content, user_id, is_public, visibility, status, created_at, workflow, constraints, feasibility_score"
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
+  if (data?.length) {
+    await Promise.all(data.map((design) => migrateWorkflowIfNeeded(design, user.id)));
+  }
   return data?.map(mapDesignFromDb);
 }
 
@@ -115,6 +164,9 @@ export async function createDesign(payload: {
   constraints: any;
   status?: string;
   visibility?: "public" | "private";
+  description?: string;
+  feasibilityScore?: number | null;
+  canonicalDesign?: any;
 }) {
   const {
     data: { user },
@@ -127,18 +179,27 @@ export async function createDesign(payload: {
     throw new Error("Title is required");
   }
 
+  const canonicalDesign = payload.canonicalDesign;
+
   const { data, error } = await supabase
     .from("designs")
     .insert({
       title: normalizedTitle,
+      status: payload.status ?? "draft",
+      description: payload.description ?? null,
+      workflow: payload.workflow ?? null,
+      constraints: payload.constraints ?? null,
       // Store all design content in a single JSON column to match the DB contract.
       content: {
-        workflow: payload.workflow,
         constraints: payload.constraints,
         status: payload.status ?? "draft",
+        feasibilityScore: payload.feasibilityScore ?? null,
+        design: canonicalDesign ?? null,
       },
       // Map UI "public"/"private" to DB `is_public` BOOLEAN.
       is_public: toDbIsPublic(payload.visibility),
+      visibility: payload.visibility ?? "private",
+      feasibility_score: payload.feasibilityScore ?? null,
       user_id: user.id,                  // REQUIRED for RLS
     })
     .select()
@@ -147,6 +208,33 @@ export async function createDesign(payload: {
   if (error) {
     console.error("createDesign error", error);
     throw error;
+  }
+
+  if (data?.id) {
+    console.info("Saved design ID:", data.id);
+  }
+
+  if (data?.id && canonicalDesign) {
+    const nextContent: DesignContent = {
+      ...(data.content ?? {}),
+      design: {
+        ...canonicalDesign,
+        id: data.id,
+        created_at: data.created_at ?? canonicalDesign.created_at,
+      },
+    };
+
+    const { error: updateError } = await supabase
+      .from("designs")
+      .update({ content: nextContent })
+      .eq("id", data.id)
+      .eq("user_id", data.user_id);
+
+    if (updateError) {
+      console.error("CANONICAL DESIGN UPDATE ERROR:", updateError);
+    } else {
+      data.content = nextContent;
+    }
   }
 
   notifyDesignsUpdated();
@@ -173,8 +261,14 @@ export async function getDesignById(id: string) {
       `
       id,
       title,
+      description,
       content,
       is_public,
+      visibility,
+      status,
+      feasibility_score,
+      workflow,
+      constraints,
       created_at
       `
     )
@@ -187,6 +281,7 @@ export async function getDesignById(id: string) {
     return null;
   }
 
+  await migrateWorkflowIfNeeded(data, user.id);
   return mapDesignFromDb(data);
 }
 
@@ -238,10 +333,30 @@ export const updateDesignVisibility = async (
     throw new Error("Not authenticated");
   }
 
+  const { data: existing, error: fetchError } = await supabase
+    .from("designs")
+    .select("content")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (fetchError) {
+    console.error("SUPABASE VISIBILITY LOAD ERROR:", fetchError);
+    throw fetchError;
+  }
+
+  const prevContent = (existing?.content ?? {}) as DesignContent;
+  const nextContent: DesignContent = {
+    ...prevContent,
+    design: prevContent.design
+      ? { ...prevContent.design, visibility }
+      : prevContent.design,
+  };
+
   const { error } = await supabase
     .from("designs")
     // Map UI "public"/"private" to DB `is_public` BOOLEAN for updates.
-    .update({ is_public: toDbIsPublic(visibility) })
+    .update({ is_public: toDbIsPublic(visibility), content: nextContent })
     .eq("id", id)
     .eq("user_id", user.id);
 

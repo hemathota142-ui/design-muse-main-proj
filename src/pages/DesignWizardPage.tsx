@@ -29,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useDesignDraft } from "@/contexts/DesignDraftContext";
 
 const steps = [
   { id: 1, title: "Idea & Intent", icon: Lightbulb, description: "Describe your product vision" },
@@ -84,45 +85,29 @@ export default function DesignWizardPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+  const { designDraft, updateDraft } = useDesignDraft();
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [formData, setFormData] = useState({
-    // Step 1
-    productType: "",
-    customProductType: "",
-    productName: "",
-    purpose: "",
-    targetUser: "",
-    customTargetUser: "",
-    environment: "",
-    customEnvironment: "",
-    // Step 2
-    skillLevel: "Intermediate",
-    budget: 5000,
-    timeWeeks: [4],
-    safetyRequirements: "",
-    // Step 3
-    preferredMaterials: [] as string[],
-    availableTools: [] as string[],
-    sustainabilityPriority: false,
-  });
 
   // Load template data if coming from templates page
   useEffect(() => {
     const templateData = location.state?.template;
     if (templateData) {
-      setFormData(prev => ({
-        ...prev,
+      updateDraft({
         productType: templateData.productType || "",
         productName: templateData.productName || "",
         purpose: templateData.purpose || "",
-        preferredMaterials: templateData.preferredMaterials || []
-      }));
+        preferredMaterials: templateData.preferredMaterials || [],
+      });
     }
-  }, [location.state]);
+    const returnToStep = location.state?.returnToStep;
+    if (returnToStep) {
+      setCurrentStep(returnToStep);
+    }
+  }, [location.state, updateDraft]);
 
   const updateFormData = (field: string, value: any) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    updateDraft({ [field]: value } as any);
     // Clear error when field is updated
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: "" }));
@@ -130,13 +115,12 @@ export default function DesignWizardPage() {
   };
 
   const toggleArrayItem = (field: string, item: string) => {
-    setFormData((prev) => {
-      const array = prev[field as keyof typeof prev] as string[];
-      if (array.includes(item)) {
-        return { ...prev, [field]: array.filter((i) => i !== item) };
-      }
-      return { ...prev, [field]: [...array, item] };
-    });
+    const array = (designDraft as any)[field] as string[];
+    if (array.includes(item)) {
+      updateDraft({ [field]: array.filter((i) => i !== item) } as any);
+      return;
+    }
+    updateDraft({ [field]: [...array, item] } as any);
   };
 
   // Validation for each step
@@ -144,27 +128,27 @@ export default function DesignWizardPage() {
     const newErrors: Record<string, string> = {};
 
     if (step === 1) {
-      if (!formData.productType) {
+      if (!designDraft.productType) {
         newErrors.productType = "Please select a product type";
       }
-      if (!formData.productName.trim()) {
+      if (!designDraft.productName.trim()) {
         newErrors.productName = "Product name is required";
-      } else if (formData.productName.length < 3) {
+      } else if (designDraft.productName.length < 3) {
         newErrors.productName = "Product name must be at least 3 characters";
       }
-      if (!formData.purpose.trim()) {
+      if (!designDraft.purpose.trim()) {
         newErrors.purpose = "Please describe the purpose";
       }
     }
 
     if (step === 2) {
-      if (!formData.skillLevel) {
+      if (!designDraft.skillLevel) {
         newErrors.skillLevel = "Please select your skill level";
       }
     }
 
     if (step === 3) {
-      if (formData.preferredMaterials.length === 0) {
+      if (designDraft.preferredMaterials.length === 0) {
         newErrors.preferredMaterials = "Please select at least one material";
       }
     }
@@ -187,7 +171,7 @@ export default function DesignWizardPage() {
       setCurrentStep((prev) => prev + 1);
     } else {
       // Navigate to AI analysis
-      navigate("/design/analyze", { state: { formData } });
+      navigate("/design/analyze");
     }
   };
 
@@ -288,7 +272,7 @@ export default function DesignWizardPage() {
                           onClick={() => updateFormData("productType", type)}
                           className={cn(
                             "px-4 py-3 rounded-xl border text-sm font-medium transition-all",
-                            formData.productType === type
+                            designDraft.productType === type
                               ? "border-primary bg-primary/10 text-primary"
                               : "border-border hover:border-primary/50 text-muted-foreground hover:text-foreground",
                             errors.productType && "border-destructive/50"
@@ -298,7 +282,7 @@ export default function DesignWizardPage() {
                         </button>
                       ))}
                     </div>
-                    {formData.productType === "Other" && (
+                    {designDraft.productType === "Other" && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
@@ -306,7 +290,7 @@ export default function DesignWizardPage() {
                       >
                         <Input
                           placeholder="Specify your product type..."
-                          value={formData.customProductType}
+                          value={designDraft.customProductType}
                           onChange={(e) => updateFormData("customProductType", e.target.value)}
                           className="h-10"
                         />
@@ -328,7 +312,7 @@ export default function DesignWizardPage() {
                     <Input
                       id="productName"
                       placeholder="e.g., Portable Solar Phone Charger"
-                      value={formData.productName}
+                      value={designDraft.productName}
                       onChange={(e) => updateFormData("productName", e.target.value)}
                       className={cn("h-12", errors.productName && "border-destructive")}
                     />
@@ -348,7 +332,7 @@ export default function DesignWizardPage() {
                     <Textarea
                       id="purpose"
                       placeholder="Describe what your product does and how it will be used..."
-                      value={formData.purpose}
+                      value={designDraft.purpose}
                       onChange={(e) => updateFormData("purpose", e.target.value)}
                       rows={3}
                       className={errors.purpose ? "border-destructive" : ""}
@@ -365,7 +349,7 @@ export default function DesignWizardPage() {
                     <div className="space-y-2">
                       <Label>Target User</Label>
                       <Select
-                        value={formData.targetUser}
+                        value={designDraft.targetUser}
                         onValueChange={(value) => updateFormData("targetUser", value)}
                       >
                         <SelectTrigger>
@@ -377,10 +361,10 @@ export default function DesignWizardPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      {formData.targetUser === "Other" && (
+                      {designDraft.targetUser === "Other" && (
                         <Input
                           placeholder="Specify target user..."
-                          value={formData.customTargetUser}
+                          value={designDraft.customTargetUser}
                           onChange={(e) => updateFormData("customTargetUser", e.target.value)}
                           className="mt-2"
                         />
@@ -389,7 +373,7 @@ export default function DesignWizardPage() {
                     <div className="space-y-2">
                       <Label>Operating Environment</Label>
                       <Select
-                        value={formData.environment}
+                        value={designDraft.environment}
                         onValueChange={(value) => updateFormData("environment", value)}
                       >
                         <SelectTrigger>
@@ -401,10 +385,10 @@ export default function DesignWizardPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      {formData.environment === "Other" && (
+                      {designDraft.environment === "Other" && (
                         <Input
                           placeholder="Specify environment..."
-                          value={formData.customEnvironment}
+                          value={designDraft.customEnvironment}
                           onChange={(e) => updateFormData("customEnvironment", e.target.value)}
                           className="mt-2"
                         />
@@ -432,7 +416,7 @@ export default function DesignWizardPage() {
                           onClick={() => updateFormData("skillLevel", level)}
                           className={cn(
                             "px-4 py-3 rounded-xl border text-sm font-medium transition-all",
-                            formData.skillLevel === level
+                            designDraft.skillLevel === level
                               ? "border-primary bg-primary/10 text-primary"
                               : "border-border hover:border-primary/50 text-muted-foreground hover:text-foreground"
                           )}
@@ -454,7 +438,7 @@ export default function DesignWizardPage() {
                       <IndianRupee className="w-5 h-5 text-muted-foreground" />
                       <Input
                         type="number"
-                        value={formData.budget}
+                        value={designDraft.budget}
                         onChange={(e) => updateFormData("budget", parseInt(e.target.value) || 0)}
                         placeholder="Enter budget in INR"
                         className="h-12 text-lg"
@@ -471,11 +455,11 @@ export default function DesignWizardPage() {
                     <div className="flex items-center justify-between">
                       <Label>Time Available</Label>
                       <span className="text-lg font-semibold text-primary">
-                        {formData.timeWeeks[0]} weeks
+                        {designDraft.timeWeeks[0]} weeks
                       </span>
                     </div>
                     <Slider
-                      value={formData.timeWeeks}
+                      value={designDraft.timeWeeks}
                       onValueChange={(value) => updateFormData("timeWeeks", value)}
                       max={24}
                       min={1}
@@ -493,7 +477,7 @@ export default function DesignWizardPage() {
                     <Textarea
                       id="safety"
                       placeholder="e.g., Must be child-safe, no sharp edges, eco-friendly materials preferred..."
-                      value={formData.safetyRequirements}
+                      value={designDraft.safetyRequirements}
                       onChange={(e) => updateFormData("safetyRequirements", e.target.value)}
                       rows={3}
                     />
@@ -522,7 +506,7 @@ export default function DesignWizardPage() {
                           onClick={() => toggleArrayItem("preferredMaterials", material)}
                           className={cn(
                             "px-4 py-3 rounded-xl border text-sm font-medium transition-all",
-                            formData.preferredMaterials.includes(material)
+                            designDraft.preferredMaterials.includes(material)
                               ? "border-primary bg-primary/10 text-primary"
                               : "border-border hover:border-primary/50 text-muted-foreground hover:text-foreground",
                             errors.preferredMaterials && "border-destructive/50"
@@ -552,7 +536,7 @@ export default function DesignWizardPage() {
                           onClick={() => toggleArrayItem("availableTools", tool)}
                           className={cn(
                             "px-4 py-3 rounded-xl border text-sm font-medium transition-all text-left",
-                            formData.availableTools.includes(tool)
+                            designDraft.availableTools.includes(tool)
                               ? "border-success bg-success/10 text-success"
                               : "border-border hover:border-success/50 text-muted-foreground hover:text-foreground"
                           )}
@@ -567,7 +551,7 @@ export default function DesignWizardPage() {
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={formData.sustainabilityPriority}
+                        checked={designDraft.sustainabilityPriority}
                         onChange={(e) => updateFormData("sustainabilityPriority", e.target.checked)}
                         className="w-5 h-5 rounded border-border text-primary focus:ring-primary"
                       />

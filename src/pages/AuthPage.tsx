@@ -1,5 +1,3 @@
-import { supabase } from "@/lib/supabase";
-import { login, signup } from "@/lib/auth";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -61,21 +59,11 @@ export default function AuthPage({ mode }: AuthPageProps) {
     try {
       if (mode === "login") {
         await login(formData.email, formData.password);
+        localStorage.setItem("auth:last_action", "login");
       } else {
-  const { error } = await supabase.auth.signUp({
-  email: formData.email,
-  password: formData.password,
-  options: {
-    data: {
-      full_name: formData.name,
-    },
-  },
-});
-
-  if (error) {
-    throw error;
-  }
-}
+        await signup(formData.name, formData.email, formData.password);
+        localStorage.setItem("auth:last_action", "signup");
+      }
 
 
       toast({

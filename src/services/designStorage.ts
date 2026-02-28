@@ -7,6 +7,10 @@ export interface SavedDesign {
   data: DesignData;
   version: number;
   userId: string;
+  created_at?: string;
+  visibility?: "public" | "private";
+  designDraft?: any;
+  canonicalDesign?: any;
 }
 
 export interface DesignData {
@@ -23,6 +27,10 @@ export interface DesignData {
   selectedConcept?: string;
   workflowSteps?: WorkflowStep[];
   materialOptimizations?: MaterialOptimization[];
+  designDraft?: any;
+  visibility?: "public" | "private";
+  created_at?: string;
+  canonicalDesign?: any;
 }
 
 export interface WorkflowStep {
@@ -42,62 +50,68 @@ export interface MaterialOptimization {
   accepted: boolean;
 }
 
-const STORAGE_KEY = "smartdesign_saved_designs";
+const STORAGE_KEY_PREFIX = "smartdesign_saved_designs";
 
 // Storage interface - implement this for different backends
 interface StorageAdapter {
   getAll(userId: string): Promise<SavedDesign[]>;
-  getById(id: string): Promise<SavedDesign | null>;
-  save(design: SavedDesign): Promise<SavedDesign>;
-  update(id: string, design: Partial<SavedDesign>): Promise<SavedDesign>;
-  delete(id: string): Promise<void>;
+  getById(userId: string, id: string): Promise<SavedDesign | null>;
+  save(userId: string, design: SavedDesign): Promise<SavedDesign>;
+  update(userId: string, id: string, design: Partial<SavedDesign>): Promise<SavedDesign>;
+  delete(userId: string, id: string): Promise<void>;
   search(userId: string, query: string): Promise<SavedDesign[]>;
 }
 
 // LocalStorage implementation
 class LocalStorageAdapter implements StorageAdapter {
-  private getDesigns(): SavedDesign[] {
-    const data = localStorage.getItem(STORAGE_KEY);
+  private getStorageKey(userId: string): string {
+    return `${STORAGE_KEY_PREFIX}_${userId}`;
+  }
+
+  private getDesigns(userId: string): SavedDesign[] {
+    const data = localStorage.getItem(this.getStorageKey(userId));
     return data ? JSON.parse(data) : [];
   }
 
-  private setDesigns(designs: SavedDesign[]): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(designs));
+  private setDesigns(userId: string, designs: SavedDesign[]): void {
+    localStorage.setItem(this.getStorageKey(userId), JSON.stringify(designs));
   }
 
   async getAll(userId: string): Promise<SavedDesign[]> {
-    const designs = this.getDesigns();
-    return designs
-      .filter((d) => d.userId === userId)
-      .sort((a, b) => b.timestamp - a.timestamp);
+    const designs = this.getDesigns(userId);
+    return designs.sort((a, b) => b.timestamp - a.timestamp);
   }
 
-  async getById(id: string): Promise<SavedDesign | null> {
-    const designs = this.getDesigns();
+  async getById(userId: string, id: string): Promise<SavedDesign | null> {
+    const designs = this.getDesigns(userId);
     return designs.find((d) => d.id === id) || null;
   }
 
-  async save(design: SavedDesign): Promise<SavedDesign> {
-    const designs = this.getDesigns();
+  async save(userId: string, design: SavedDesign): Promise<SavedDesign> {
+    const designs = this.getDesigns(userId);
     designs.push(design);
-    this.setDesigns(designs);
+    this.setDesigns(userId, designs);
     return design;
   }
 
-  async update(id: string, updates: Partial<SavedDesign>): Promise<SavedDesign> {
-    const designs = this.getDesigns();
+  async update(
+    userId: string,
+    id: string,
+    updates: Partial<SavedDesign>
+  ): Promise<SavedDesign> {
+    const designs = this.getDesigns(userId);
     const index = designs.findIndex((d) => d.id === id);
     if (index === -1) throw new Error("Design not found");
     
     designs[index] = { ...designs[index], ...updates, timestamp: Date.now() };
-    this.setDesigns(designs);
+    this.setDesigns(userId, designs);
     return designs[index];
   }
 
-  async delete(id: string): Promise<void> {
-    const designs = this.getDesigns();
+  async delete(userId: string, id: string): Promise<void> {
+    const designs = this.getDesigns(userId);
     const filtered = designs.filter((d) => d.id !== id);
-    this.setDesigns(filtered);
+    this.setDesigns(userId, filtered);
   }
 
   async search(userId: string, query: string): Promise<SavedDesign[]> {
@@ -129,6 +143,46 @@ export function createDesign(
     version: 1,
     userId,
   };
+}
+
+export async function saveGuestDesign(params: {
+  designDraft: {
+    title: string;
+    workflow: any[];
+    constraints: any;
+    description?: string;
+    feasibilityScore?: number | null;
+  };
+  canonicalDesign?: any;
+  visibility: "public" | "private";
+  userId?: string;
+}) {
+  const userId = params.userId || "guest";
+  const created_at = new Date().toISOString();
+  const name = params.designDraft.title;
+
+  const design = createDesign(
+    name,
+    {
+      designDraft: params.designDraft,
+      canonicalDesign: params.canonicalDesign,
+      visibility: params.visibility,
+      created_at,
+    },
+    userId
+  );
+
+  design.created_at = created_at;
+  design.visibility = params.visibility;
+  design.designDraft = params.designDraft;
+  const canonicalWithIds = params.canonicalDesign
+    ? { ...params.canonicalDesign, id: design.id, created_at }
+    : undefined;
+
+  design.canonicalDesign = canonicalWithIds;
+  design.data.canonicalDesign = canonicalWithIds;
+
+  return designStorage.save(userId, design);
 }
 
 // Export design as JSON

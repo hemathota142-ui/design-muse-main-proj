@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { supabase } from "@/lib/supabase";
+import { generateFullWorkflowPDF } from "@/utils/pdfExport";
 import { 
   CheckCircle, 
   Globe, 
@@ -18,66 +18,168 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { createDesign } from "@/services/designs.service";
+import { createDesign as createRemoteDesign } from "@/services/designs.service";
+import { saveGuestDesign } from "@/services/designStorage";
+import type { Design } from "@/types/design";
+import { useDesignDraft } from "@/contexts/DesignDraftContext";
 
 
 export default function DesignCompletePage() {
   const navigate = useNavigate();
-  const location = useLocation();
-const state = location.state as any;
-const title = state?.title ?? "Untitled Design";
-const workflow = state?.workflow ?? [];
-const constraints = state?.constraints ?? {};
+  const { designDraft } = useDesignDraft();
+  const title = String(designDraft.productName || "").trim();
+  const workflow = Array.isArray(designDraft.workflowSteps)
+    ? designDraft.workflowSteps
+    : [];
+  const constraints = {
+    description: String(designDraft.purpose || ""),
+    materials: Array.isArray(designDraft.preferredMaterials)
+      ? designDraft.preferredMaterials
+      : [],
+    tools: Array.isArray(designDraft.availableTools)
+      ? designDraft.availableTools
+      : [],
+    notes: String(designDraft.safetyRequirements || ""),
+    productType: String(designDraft.productType || ""),
+    purpose: String(designDraft.purpose || ""),
+  };
   
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
   
-  const concept = location.state?.concept;
-  const formData = location.state?.formData;
-  
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [isSaving, setIsSaving] = useState(false);
 
- const handlePostDesign = async () => {
-  if (!user || isGuest) {
-    toast({
-      title: "Login required",
-      description: "Please sign in to save your design.",
-      variant: "destructive",
-    });
-    return;
-  }
+  const buildCanonicalDesign = (
+    draft: {
+      title: string;
+      workflow: any[];
+      constraints: any;
+      description?: string;
+      feasibilityScore?: number | null;
+    },
+    nextVisibility: "public" | "private"
+  ): Design => {
+    const created_at = new Date().toISOString();
+    const productName = String(draft.title || "").trim();
+    const timeAvailable = Array.isArray(designDraft.timeWeeks)
+      ? `${designDraft.timeWeeks[0]} weeks`
+      : "";
 
-  setIsSaving(true);
+    return {
+      id: "pending",
+      user_id: user?.id ?? null,
+      title: productName,
+      product_name: productName,
+      product_type: String(designDraft.productType || ""),
+      purpose: String(designDraft.purpose || ""),
+      target_user: String(designDraft.targetUser || ""),
+      environment: String(designDraft.environment || ""),
+      skill_level: String(designDraft.skillLevel || ""),
+      budget: typeof designDraft.budget === "number" ? designDraft.budget : 0,
+      time_available: timeAvailable,
+      safety_constraints: String(designDraft.safetyRequirements || ""),
+      materials: Array.isArray(designDraft.preferredMaterials)
+        ? designDraft.preferredMaterials
+        : [],
+      tools: Array.isArray(designDraft.availableTools)
+        ? designDraft.availableTools
+        : [],
+      sustainability: Boolean(designDraft.sustainabilityPriority),
+      estimated_cost:
+        typeof designDraft.estimatedCost === "number"
+          ? designDraft.estimatedCost
+          : null,
+      steps: Array.isArray(draft.workflow) ? draft.workflow : [],
+      visibility: nextVisibility,
+      created_at,
+    };
+  };
 
-  try {
-    const data = await createDesign({
-  title,
-  workflow,
-  constraints,
-  status: "draft",
-  visibility,
-});
-
-    console.log("CREATED DESIGN:", data);
-
-    if (!data?.id) {
-      throw new Error("No design ID returned");
+  const saveDesign = async (
+    designDraft: {
+      title: string;
+      workflow: any[];
+      constraints: any;
+      description?: string;
+      feasibilityScore?: number | null;
+    },
+    visibility: "public" | "private"
+  ) => {
+    if (!designDraft.title) {
+      toast({
+        title: "Product name required",
+        description: "Please provide a product name before saving.",
+        variant: "destructive",
+      });
+      return;
     }
 
-    navigate(`/designs/${data.id}`);
-  } catch (error) {
-    console.error(error);
-    toast({
-      title: "Error saving design",
-      description: "Please try again.",
-      variant: "destructive",
-    });
-  } finally {
-    setIsSaving(false);
-  }
-};
+    setIsSaving(true);
 
+    try {
+      const canonicalDesign = buildCanonicalDesign(designDraft, visibility);
+
+      if (!user || isGuest) {
+        await saveGuestDesign({
+          designDraft,
+          canonicalDesign,
+          visibility,
+          userId: user?.id || "guest",
+        });
+
+        toast({
+          title: "Design saved locally",
+          description: "Sign in to sync this design to the cloud.",
+        });
+
+        return;
+      }
+
+      const data = await createRemoteDesign({
+        title: designDraft.title,
+        workflow: designDraft.workflow,
+        constraints: designDraft.constraints,
+        status: "saved",
+        visibility,
+        description: designDraft.description,
+        feasibilityScore: designDraft.feasibilityScore ?? null,
+        canonicalDesign,
+      });
+
+      console.log("CREATED DESIGN:", data);
+
+      if (!data?.id) {
+        throw new Error("No design ID returned");
+      }
+
+      navigate(`/designs/${data.id}`);
+    } catch (error) {
+      console.error(error);
+      toast({
+        title: "Error saving design",
+        description: "Save failed. Your design was not saved.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+
+  const handleExportDesign = () => {
+    const exportTitle =
+      title ||
+      (typeof designDraft.productName === "string" ? designDraft.productName : "") ||
+      (typeof designDraft.selectedConceptName === "string" ? designDraft.selectedConceptName : "") ||
+      "Design Workflow";
+
+    generateFullWorkflowPDF(workflow, exportTitle);
+    toast({
+      title: "Workflow PDF Generated",
+      description: "Your design workflow PDF is ready.",
+    });
+  };
 
   return (
     <AppLayout>
@@ -103,7 +205,7 @@ const constraints = state?.constraints ?? {};
           <p className="text-muted-foreground">
             You've completed your design workflow for{" "}
             <span className="font-medium text-foreground">
-              {formData?.productName || concept?.name || "your design"}
+              {designDraft.productName || designDraft.selectedConceptName || "your design"}
             </span>
           </p>
         </motion.div>
@@ -120,16 +222,20 @@ const constraints = state?.constraints ?? {};
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Product Name</span>
-                  <span className="font-medium text-foreground">{formData?.productName || "N/A"}</span>
+                  <span className="font-medium text-foreground">
+                    {designDraft.productName || "N/A"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Concept</span>
-                  <span className="font-medium text-foreground">{concept?.name || "N/A"}</span>
+                  <span className="font-medium text-foreground">
+                    {designDraft.selectedConceptName || "N/A"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Estimated Cost</span>
                   <span className="font-medium text-foreground">
-                    ₹{concept?.estimatedCost?.toLocaleString() || "N/A"}
+                    ₹{designDraft.estimatedCost?.toLocaleString() || "N/A"}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -222,7 +328,21 @@ const constraints = state?.constraints ?? {};
   variant="gradient"
   size="lg"
   className={cn("w-full gap-2", isGuest ? "opacity-50 cursor-not-allowed" : "")}
-  onClick={handlePostDesign}
+            onClick={() =>
+              saveDesign(
+                {
+                  title,
+                  workflow,
+                  constraints,
+                  description:
+                    typeof designDraft.purpose === "string"
+                      ? designDraft.purpose
+                      : "",
+                  feasibilityScore: null,
+                },
+                visibility
+              )
+            }
   disabled={isSaving || isGuest} // disable for guests
   title={isGuest ? "Sign up to save your design" : ""} // tooltip for guests
 >
@@ -247,7 +367,7 @@ const constraints = state?.constraints ?? {};
 
 
           <div className="flex gap-3">
-            <Button variant="outline" className="flex-1 gap-2">
+            <Button variant="outline" className="flex-1 gap-2" onClick={handleExportDesign}>
               <Download className="w-4 h-4" />
               Export Design
             </Button>
@@ -269,3 +389,4 @@ const constraints = state?.constraints ?? {};
     </AppLayout>
   );
 }
+

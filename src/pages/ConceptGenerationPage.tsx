@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   Check, 
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useDesignDraft } from "@/contexts/DesignDraftContext";
 
 // Generate concepts based on input data
 const generateConcepts = (formData?: any) => {
@@ -61,11 +62,10 @@ const generateConcepts = (formData?: any) => {
 
 export default function ConceptGenerationPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { toast } = useToast();
-  const formData = location.state?.formData;
+  const { designDraft, updateDraft } = useDesignDraft();
   
-  const [concepts, setConcepts] = useState(generateConcepts(formData));
+  const [concepts, setConcepts] = useState(generateConcepts(designDraft));
   const [selectedConcept, setSelectedConcept] = useState<number | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
 
@@ -77,7 +77,7 @@ export default function ConceptGenerationPage() {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     
     // Generate new randomized concepts
-    const newConcepts = generateConcepts(formData).map(concept => ({
+    const newConcepts = generateConcepts(designDraft).map(concept => ({
       ...concept,
       feasibilityScore: Math.floor(Math.random() * 20) + 75,
       estimatedCost: concept.estimatedCost + Math.floor(Math.random() * 5000) - 2500
@@ -94,17 +94,31 @@ export default function ConceptGenerationPage() {
 
   const handleModifyConstraints = () => {
     // Navigate back to design wizard to modify constraints
-    navigate("/design/new", { state: { formData, returnToStep: 2 } });
+    navigate("/design/new", { state: { returnToStep: 2 } });
   };
 
   const handleSelectConcept = () => {
+    if (!designDraft?.productName || !designDraft.productName.trim()) {
+      toast({
+        title: "Product name required",
+        description: "Please provide a product name before continuing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (selectedConcept) {
       const concept = concepts.find(c => c.id === selectedConcept);
+      if (concept) {
+        updateDraft({
+          selectedConceptName: concept.name,
+          estimatedCost: concept.estimatedCost,
+        });
+      }
       navigate("/design/workflow", { 
         state: { 
           conceptId: selectedConcept,
-          concept,
-          formData 
+          concept
         } 
       });
     }

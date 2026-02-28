@@ -1,15 +1,14 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getMyDesigns } from "@/services/designs.service";
+import { getMyProfile } from "@/services/profiles.service";
 import { motion } from "framer-motion";
 import { 
   Plus, 
   FolderOpen, 
   TrendingUp, 
   Bookmark, 
-  Target,
   ArrowRight,
-  Clock,
   Sparkles,
   MessageSquare,
   Layers
@@ -36,9 +35,31 @@ const itemVariants = {
 };
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [designs, setDesigns] = useState<any[]>([]);
-  const totalDesigns = designs.length;
+  const [profileName, setProfileName] = useState<string>("");
+  const [authGreeting, setAuthGreeting] = useState<"signup" | "login" | "">("");
   const { user, isGuest } = useAuth();
+  const totalDesigns = designs.length;
+  const savedDesigns = designs.filter((design) => {
+    const status = String(design?.status || "").toLowerCase();
+    return status && status !== "draft";
+  }).length;
+  const feasibilityValues = designs
+    .map((design) => design?.feasibilityScore)
+    .filter((value) => typeof value === "number") as number[];
+  const avgFeasibility = feasibilityValues.length
+    ? Math.round(
+        feasibilityValues.reduce((sum, value) => sum + value, 0) /
+          feasibilityValues.length
+      )
+    : 0;
+  const completedDesigns = designs.filter(
+    (design) => String(design?.status || "").toLowerCase() === "completed"
+  ).length;
+  const inProgressDesigns = designs.filter(
+    (design) => String(design?.status || "").toLowerCase() === "in_progress"
+  ).length;
 
 useEffect(() => {
   if (!user?.id || isGuest) return;
@@ -78,12 +99,43 @@ useEffect(() => {
   };
 }, [user, isGuest]);
 
+useEffect(() => {
+  if (!user?.id || isGuest) return;
+
+  const lastAction = localStorage.getItem("auth:last_action");
+  if (lastAction === "signup" || lastAction === "login") {
+    setAuthGreeting(lastAction);
+    localStorage.removeItem("auth:last_action");
+  } else {
+    setAuthGreeting("login");
+  }
+
+  let isMounted = true;
+  const loadProfile = async () => {
+    try {
+      const profile = await getMyProfile();
+      if (isMounted) {
+        setProfileName(profile.full_name || "");
+      }
+    } catch {
+      if (isMounted) setProfileName("");
+    }
+  };
+
+  loadProfile();
+  return () => {
+    isMounted = false;
+  };
+}, [user, isGuest]);
 
 
-const displayName =
-  user?.user_metadata?.full_name ||
-  user?.email?.split("@")[0] ||
-  "Designer";
+const displayName = profileName;
+const greeting =
+  authGreeting === "signup"
+    ? "Welcome"
+    : displayName
+      ? `Welcome back, ${displayName}!`
+      : "Welcome back!";
 
 
 
@@ -99,7 +151,7 @@ const displayName =
         <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-1">
-              Welcome back, {displayName}! 👋
+              {greeting} 👋
             </h1>
             <p className="text-muted-foreground">
               Ready to create something amazing? Let's design smarter.
@@ -119,21 +171,103 @@ const displayName =
         </motion.div>
 
         {/* Stats Grid */}
-        <motion.div variants={itemVariants} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <motion.div variants={itemVariants} className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
           
-           <Card className="card-hover">
-  <CardContent className="p-6">
-    <div className="flex items-start justify-between">
-      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-        <FolderOpen className="w-6 h-6 text-primary" />
-      </div>
-    </div>
-    <div className="mt-4">
-      <p className="text-3xl font-bold text-foreground">{totalDesigns}</p>
-      <p className="text-sm text-muted-foreground">Total Designs</p>
-    </div>
-  </CardContent>
-</Card>
+          <Card className="card-hover">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <FolderOpen className="w-6 h-6 text-primary" />
+                </div>
+              </div>
+              <div className="mt-4">
+                <p className="text-3xl font-bold text-foreground">{totalDesigns}</p>
+                <p className="text-sm text-muted-foreground">Total Designs</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="card-hover">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center">
+                  <Bookmark className="w-6 h-6 text-success" />
+                </div>
+              </div>
+              <div className="mt-4">
+                <p className="text-3xl font-bold text-foreground">{savedDesigns}</p>
+                <p className="text-sm text-muted-foreground">Saved Designs</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="card-hover">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
+                  <TrendingUp className="w-6 h-6 text-accent-foreground" />
+                </div>
+              </div>
+              <div className="mt-4">
+                <p className="text-3xl font-bold text-foreground">
+                  {avgFeasibility}%
+                </p>
+                <p className="text-sm text-muted-foreground">Avg Feasibility</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card
+            className="card-hover cursor-pointer"
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/designs?status=completed")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                navigate("/designs?status=completed");
+              }
+            }}
+          >
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center">
+                  <TrendingUp className="w-6 h-6 text-success" />
+                </div>
+              </div>
+              <div className="mt-4">
+                <p className="text-3xl font-bold text-foreground">
+                  {completedDesigns}
+                </p>
+                <p className="text-sm text-muted-foreground">Completed Designs</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card
+            className="card-hover cursor-pointer"
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/designs?status=in_progress")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                navigate("/designs?status=in_progress");
+              }
+            }}
+          >
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="w-12 h-12 rounded-xl bg-warning/10 flex items-center justify-center">
+                  <Bookmark className="w-6 h-6 text-warning" />
+                </div>
+              </div>
+              <div className="mt-4">
+                <p className="text-3xl font-bold text-foreground">
+                  {inProgressDesigns}
+                </p>
+                <p className="text-sm text-muted-foreground">In Progress Designs</p>
+              </div>
+            </CardContent>
+          </Card>
 
         </motion.div>
 
@@ -216,7 +350,19 @@ const displayName =
       </CardContent>
     </Card>
   ) : (
-    designs.slice(0, 3).map((design) => (
+    designs.slice(0, 3).map((design) => {
+      const title =
+        typeof design?.title === "string" ? design.title.trim() : "";
+      const feasibility =
+        typeof design?.feasibilityScore === "number"
+          ? `${design.feasibilityScore}%`
+          : "N/A";
+      const status =
+        typeof design?.status === "string" && design.status.trim()
+          ? design.status
+          : "unknown";
+
+      return (
       <Card key={design.id} className="card-hover">
         <CardContent className="p-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -224,7 +370,12 @@ const displayName =
               <FolderOpen className="w-5 h-5 text-muted-foreground" />
             </div>
             <div>
-              <p className="font-medium text-foreground">{design.title}</p>
+              <p className="font-medium text-foreground">{title}</p>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                <span>Feasibility: {feasibility}</span>
+                <span className="text-muted-foreground/50">•</span>
+                <span className="capitalize">Status: {status}</span>
+              </div>
             </div>
           </div>
 
@@ -236,7 +387,8 @@ const displayName =
           </Link>
         </CardContent>
       </Card>
-    ))
+      );
+    })
   )}
 </div>
         </motion.div>
