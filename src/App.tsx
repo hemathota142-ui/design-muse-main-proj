@@ -133,11 +133,7 @@ return (
   {/* Feature Pages */}
   <Route
     path="/ai-suggestions"
-    element={
-      <ProtectedRoute>
-        <AISuggestionsPage />
-      </ProtectedRoute>
-    }
+    element={<AISuggestionsPage />}
   />
   <Route
     path="/templates"
