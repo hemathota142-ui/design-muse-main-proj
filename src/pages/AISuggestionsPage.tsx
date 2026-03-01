@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+ï»¿import { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Send,
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDesignDraft } from "@/contexts/DesignDraftContext";
 import { getMyDesigns } from "@/services/designs.service";
+import { getGuestDesigns } from "@/services/designStorage";
 import { askDesignAssistant } from "@/services/aiAssistant.service";
 import { useLocation } from "react-router-dom";
 
@@ -36,7 +37,7 @@ const quickPrompts = [
 ];
 
 export default function AISuggestionsPage() {
-  const { user } = useAuth();
+  const { user, isGuest } = useAuth();
   const { designDraft } = useDesignDraft();
   const location = useLocation();
   const [designs, setDesigns] = useState<any[]>([]);
@@ -61,7 +62,7 @@ export default function AISuggestionsPage() {
     const loadDesigns = async () => {
       try {
         setIsLoadingContext(true);
-        const data = await getMyDesigns(user.id);
+        const data = isGuest ? await getGuestDesigns() : user?.id ? await getMyDesigns(user.id) : [];
         if (isMounted) {
           setDesigns(data || []);
         }
@@ -76,7 +77,7 @@ export default function AISuggestionsPage() {
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, [user, isGuest]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -258,7 +259,7 @@ export default function AISuggestionsPage() {
           <span className="text-xs text-muted-foreground ml-auto">
             {isLoadingContext
               ? "Context: loading..."
-              : `Context: ${context.productTitle ? "title set" : "no title"} • ${context.selectedMaterials.length} materials • ${context.workflowSteps.length} steps`}
+              : `Context: ${context.productTitle ? "title set" : "no title"} â€¢ ${context.selectedMaterials.length} materials â€¢ ${context.workflowSteps.length} steps`}
           </span>
         </motion.div>
 
@@ -385,3 +386,4 @@ export default function AISuggestionsPage() {
     </AppLayout>
   );
 }
+

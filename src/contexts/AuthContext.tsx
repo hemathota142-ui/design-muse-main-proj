@@ -2,6 +2,11 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { User as SupabaseUser } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { upsertMyProfile } from "@/services/profiles.service";
+import {
+  ensureGuestSession,
+  isGuestSessionActive,
+  clearGuestSessionData,
+} from "@/lib/guestSession";
 
 interface AuthContextType {
   user: SupabaseUser | null;
@@ -10,7 +15,11 @@ interface AuthContextType {
   isGuest: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginAsGuest: () => void;
-  signup: (name: string, email: string, password: string) => Promise<void>;
+  signup: (
+    name: string,
+    email: string,
+    password: string
+  ) => Promise<{ hasSession: boolean }>;
   logout: () => void;
 }
 
@@ -31,6 +40,14 @@ const [isGuest, setIsGuest] = useState(false);
       const sessionUser = data.session?.user ?? null;
       setUser(sessionUser);
       if (sessionUser) {
+        clearGuestSessionData();
+        setIsGuest(false);
+      } else if (isGuestSessionActive()) {
+        setIsGuest(true);
+      } else {
+        setIsGuest(false);
+      }
+      if (sessionUser) {
         upsertMyProfile(sessionUser).catch((error) => {
           console.error("PROFILE UPSERT FAILED:", error);
         });
@@ -46,9 +63,13 @@ const [isGuest, setIsGuest] = useState(false);
       const sessionUser = session?.user ?? null;
       setUser(sessionUser);
       if (sessionUser) {
+        clearGuestSessionData();
+        setIsGuest(false);
         upsertMyProfile(sessionUser).catch((error) => {
           console.error("PROFILE UPSERT FAILED:", error);
         });
+      } else if (!isGuestSessionActive()) {
+        setIsGuest(false);
       }
       setLoading(false);
     });
@@ -68,21 +89,45 @@ const [isGuest, setIsGuest] = useState(false);
   };
 
   const signup = async (name: string, email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { full_name: name } },
     });
     if (error) throw error;
+
+    // Supabase can return no hard error for existing users depending on project settings.
+    const identities = (data.user as any)?.identities;
+    if (Array.isArray(identities) && identities.length === 0) {
+      throw new Error("User already registered");
+    }
+
+    return { hasSession: !!data.session };
   };
 
  const loginAsGuest = () => {
+  clearGuestSessionData();
+  ensureGuestSession();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("guest:session-changed"));
+  }
   setUser(null);       // guest is NOT a Supabase user
   setIsGuest(true);    // separate flag
   setLoading(false);
 };
 
 const logout = async () => {
+  if (isGuest) {
+    clearGuestSessionData();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("guest:session-changed"));
+    }
+    setUser(null);
+    setIsGuest(false);
+    setLoading(false);
+    return;
+  }
+
   await supabase.auth.signOut();
   setUser(null);
   setIsGuest(false);

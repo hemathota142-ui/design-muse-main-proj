@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+﻿import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { generateFullWorkflowPDF } from "@/utils/pdfExport";
 import { 
@@ -26,6 +26,7 @@ import { useDesignDraft } from "@/contexts/DesignDraftContext";
 
 export default function DesignCompletePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { designDraft } = useDesignDraft();
   const title = String(designDraft.productName || "").trim();
   const workflow = Array.isArray(designDraft.workflowSteps)
@@ -49,6 +50,35 @@ export default function DesignCompletePage() {
   
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedDesignId, setLastSavedDesignId] = useState<string | null>(null);
+  const shareDesignId =
+    lastSavedDesignId ||
+    (typeof location.state?.designId === "string" ? location.state.designId : null);
+  const saveStatusFromFlow =
+    location.state?.saveStatus === "completed" ? "completed" : "saved";
+
+  const calculateFeasibilityScore = () => {
+    const steps = Array.isArray(workflow) ? workflow : [];
+    const completedSteps = steps.filter((step: any) => step?.completed).length;
+    const stepScore = steps.length > 0 ? (completedSteps / steps.length) * 40 : 0;
+    const materialsScore = Math.min(
+      (Array.isArray(designDraft.preferredMaterials)
+        ? designDraft.preferredMaterials.length
+        : 0) * 5,
+      20
+    );
+    const toolsScore = Math.min(
+      (Array.isArray(designDraft.availableTools)
+        ? designDraft.availableTools.length
+        : 0) * 3,
+      15
+    );
+    const sustainabilityScore = designDraft.sustainabilityPriority ? 10 : 0;
+    const budgetPenalty =
+      typeof designDraft.budget === "number" && designDraft.budget < 1000 ? -8 : 0;
+    const raw = 35 + stepScore + materialsScore + toolsScore + sustainabilityScore + budgetPenalty;
+    return Math.max(35, Math.min(98, Math.round(raw)));
+  };
 
   const buildCanonicalDesign = (
     draft: {
@@ -125,14 +155,15 @@ export default function DesignCompletePage() {
           designDraft,
           canonicalDesign,
           visibility,
-          userId: user?.id || "guest",
+          status: saveStatusFromFlow,
         });
 
         toast({
-          title: "Design saved locally",
-          description: "Sign in to sync this design to the cloud.",
+          title: "Design saved for this guest session",
+          description: "Guest data is temporary and will be cleared on logout/close.",
         });
 
+        navigate("/designs");
         return;
       }
 
@@ -140,10 +171,10 @@ export default function DesignCompletePage() {
         title: designDraft.title,
         workflow: designDraft.workflow,
         constraints: designDraft.constraints,
-        status: "saved",
+        status: saveStatusFromFlow,
         visibility,
         description: designDraft.description,
-        feasibilityScore: designDraft.feasibilityScore ?? null,
+        feasibilityScore: designDraft.feasibilityScore ?? calculateFeasibilityScore(),
         canonicalDesign,
       });
 
@@ -153,6 +184,7 @@ export default function DesignCompletePage() {
         throw new Error("No design ID returned");
       }
 
+      setLastSavedDesignId(data.id);
       navigate(`/designs/${data.id}`);
     } catch (error) {
       console.error(error);
@@ -181,6 +213,26 @@ export default function DesignCompletePage() {
     });
   };
 
+  const handleShareDesign = async () => {
+    const shareUrl = shareDesignId
+      ? `${window.location.origin}/designs/${shareDesignId}?mode=read`
+      : `${window.location.origin}${window.location.pathname}?mode=read`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast({
+        title: "Link copied",
+        description: "Link copied",
+      });
+    } catch (error) {
+      console.error("Failed to copy share link:", error);
+      toast({
+        title: "Copy failed",
+        description: "Unable to copy link. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <AppLayout>
       <div className="max-w-2xl mx-auto">
@@ -200,8 +252,7 @@ export default function DesignCompletePage() {
           </motion.div>
           
           <h1 className="text-3xl font-bold text-foreground mb-2">
-            Congratulations! 🎉
-          </h1>
+            Congratulations!</h1>
           <p className="text-muted-foreground">
             You've completed your design workflow for{" "}
             <span className="font-medium text-foreground">
@@ -235,7 +286,7 @@ export default function DesignCompletePage() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Estimated Cost</span>
                   <span className="font-medium text-foreground">
-                    ₹{designDraft.estimatedCost?.toLocaleString() || "N/A"}
+                    â‚¹{designDraft.estimatedCost?.toLocaleString() || "N/A"}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -312,7 +363,7 @@ export default function DesignCompletePage() {
 
           {isGuest && (
             <p className="text-sm text-warning mt-4">
-              ⚠️ Guest users: Your design will be saved locally but may be lost on browser refresh.
+              Guest Mode (data will be lost on logout/close).
             </p>
           )}
         </motion.div>
@@ -325,9 +376,9 @@ export default function DesignCompletePage() {
           className="space-y-3"
         >
           <Button
-  variant="gradient"
-  size="lg"
-  className={cn("w-full gap-2", isGuest ? "opacity-50 cursor-not-allowed" : "")}
+            variant="gradient"
+            size="lg"
+            className="w-full gap-2"
             onClick={() =>
               saveDesign(
                 {
@@ -338,32 +389,28 @@ export default function DesignCompletePage() {
                     typeof designDraft.purpose === "string"
                       ? designDraft.purpose
                       : "",
-                  feasibilityScore: null,
+                  feasibilityScore: calculateFeasibilityScore(),
                 },
                 visibility
               )
             }
-  disabled={isSaving || isGuest} // disable for guests
-  title={isGuest ? "Sign up to save your design" : ""} // tooltip for guests
->
-  {isSaving ? (
-    <>Saving...</>
-  ) : (
-    <>
-      {visibility === "public" ? (
-        <>
-          <Globe className="w-5 h-5" />
-          Post to Profile
-        </>
-      ) : (
-        <>
-          <FolderOpen className="w-5 h-5" />
-          Save to My Designs
-        </>
-      )}
-    </>
-  )}
-</Button>
+            disabled={isSaving}
+            title={isGuest ? "Saves for this guest session only" : ""}
+          >
+            {isSaving ? (
+              <>Saving...</>
+            ) : visibility === "public" ? (
+              <>
+                <Globe className="w-5 h-5" />
+                Post to Profile
+              </>
+            ) : (
+              <>
+                <FolderOpen className="w-5 h-5" />
+                Save to My Designs
+              </>
+            )}
+          </Button>
 
 
           <div className="flex gap-3">
@@ -371,7 +418,7 @@ export default function DesignCompletePage() {
               <Download className="w-4 h-4" />
               Export Design
             </Button>
-            <Button variant="outline" className="flex-1 gap-2">
+            <Button variant="outline" className="flex-1 gap-2" onClick={handleShareDesign}>
               <Share2 className="w-4 h-4" />
               Share with Friends
             </Button>
@@ -389,4 +436,7 @@ export default function DesignCompletePage() {
     </AppLayout>
   );
 }
+
+
+
 

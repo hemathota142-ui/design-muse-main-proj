@@ -30,7 +30,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { SavedDesign, downloadDesignJSON } from "@/services/designStorage";
+import {
+  SavedDesign,
+  downloadDesignJSON,
+  getGuestDesigns,
+  deleteGuestDesign,
+  saveGuestDesignRecord,
+} from "@/services/designStorage";
 import { useToast } from "@/hooks/use-toast";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
 import { getMyDesigns, deleteDesign } from "@/services/designs.service";
@@ -49,7 +55,7 @@ export default function PreviousDesignsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("newest");
-  const [designs, setDesigns] = useState<(SavedDesign & { source: "local" | "remote" })[]>([]);
+  const [designs, setDesigns] = useState<(SavedDesign & { source: "local" | "remote" | "guest" })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
   const { user, isGuest } = useAuth();
@@ -91,12 +97,18 @@ export default function PreviousDesignsPage() {
     };
   };
 
+  const mapGuestDesign = (design: SavedDesign): SavedDesign & { source: "guest" } => ({
+    ...design,
+    source: "guest",
+  });
+
   // Load designs from Supabase (authenticated)
   useEffect(() => {
     const loadDesigns = async () => {
       try {
         if (!user || isGuest) {
-          setDesigns([]);
+          const guestDesigns = await getGuestDesigns();
+          setDesigns((guestDesigns || []).map(mapGuestDesign));
           return;
         }
 
@@ -143,21 +155,18 @@ export default function PreviousDesignsPage() {
     });
 
   const handleDelete = async (id: string) => {
-    if (isGuest || !user) {
-      toast({
-        title: "Guest users cannot delete",
-        description: "Sign up to save and manage your designs.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     try {
-      await deleteDesign(id);
+      if (isGuest || !user) {
+        await deleteGuestDesign(id);
+      } else {
+        await deleteDesign(id);
+      }
       setDesigns((prev) => prev.filter((d) => d.id !== id));
       toast({
         title: "Design deleted",
-        description: "The design has been removed from the database.",
+        description: isGuest
+          ? "The design has been removed from this guest session."
+          : "The design has been removed from the database.",
       });
     } catch (error) {
       toast({
@@ -169,15 +178,6 @@ export default function PreviousDesignsPage() {
   };
 
   const handleDuplicate = async (design: SavedDesign) => {
-    if (isGuest || !user) {
-      toast({
-        title: "Guest users cannot duplicate",
-        description: "Sign up to save and manage your designs.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     if ((design as any).source === "remote") {
       toast({
         title: "Not available yet",
@@ -186,17 +186,23 @@ export default function PreviousDesignsPage() {
       return;
     }
 
+    const ownerId = user?.id || "guest_session";
     const duplicate: SavedDesign = {
       ...design,
       id: `design_${Date.now()}`,
       name: `${design.name} (Copy)`,
       timestamp: Date.now(),
       version: 1,
-      userId: user?.id || "",
+      userId: ownerId,
     };
 
     try {
-      setDesigns((prev) => [{ ...duplicate, source: "local" }, ...prev]);
+      if (isGuest || !user) {
+        await saveGuestDesignRecord(duplicate);
+        setDesigns((prev) => [{ ...duplicate, source: "guest" }, ...prev]);
+      } else {
+        setDesigns((prev) => [{ ...duplicate, source: "local" }, ...prev]);
+      }
       toast({
         title: "Design duplicated",
         description: "A copy has been created.",

@@ -6,7 +6,7 @@ import { useDesignDraft } from "@/contexts/DesignDraftContext";
 import { createDesign, updateDesignWorkflow } from "@/services/designs.service";
 import type { Design } from "@/types/design";
 import { useNavigate, useLocation } from "react-router-dom";
-import { motion, Reorder, AnimatePresence } from "framer-motion";
+import { motion, Reorder } from "framer-motion";
 import {
   GripVertical,
   Check,
@@ -20,8 +20,7 @@ import {
   Info,
   Download,
   FileText,
-  Package,
-  Wrench
+  Package
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -118,7 +117,6 @@ const { user, isGuest } = useAuth();
   const [expandedStep, setExpandedStep] = useState<string | null>("1");
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [showMaterialsOptimization, setShowMaterialsOptimization] = useState(false);
 
   const completedCount = steps.filter((s) => s.completed).length;
   const progressPercent = (completedCount / steps.length) * 100;
@@ -131,11 +129,6 @@ const { user, isGuest } = useAuth();
       )
     );
     
-    // Show optimize button after first step is completed
-    const stepIndex = steps.findIndex(s => s.id === id);
-    if (stepIndex === 0 && !steps[0].completed) {
-      setShowMaterialsOptimization(true);
-    }
   };
 
   const startEditing = (step: WorkflowStep) => {
@@ -177,119 +170,12 @@ const { user, isGuest } = useAuth();
 
 
   const handleContinue = async () => {
-  if (!user || isGuest) {
-    toast({
-      title: "Login required",
-      description: "Please login to save designs",
-      variant: "destructive",
+    navigate("/design/preview", {
+      state: {
+        saveStatus: allCompleted ? "completed" : "saved",
+      },
     });
-    return;
-  }
-
-  try {
-    setLoading(true);
-
-    let savedDesign;
-
-    if (existingDesign?.id) {
-      await updateDesignWorkflow(existingDesign.id, steps);
-      savedDesign = { ...existingDesign, workflow: steps };
-    } else {
-      console.log("FINAL STEPS", steps);
-      const title = formData?.productName?.trim();
-      if (!title) {
-        throw new Error("Product name required");
-      }
-      const created_at = new Date().toISOString();
-      const productName = String(formData?.productName || "").trim();
-      const timeAvailable = Array.isArray(formData?.timeWeeks)
-        ? `${formData.timeWeeks[0]} weeks`
-        : "";
-      const canonicalDesign: Design = {
-        id: "pending",
-        user_id: user?.id ?? null,
-        title: productName,
-        product_name: productName,
-        product_type: String(formData?.productType || ""),
-        purpose: String(formData?.purpose || ""),
-        target_user: String(formData?.targetUser || ""),
-        environment: String(formData?.environment || ""),
-        skill_level: String(formData?.skillLevel || ""),
-        budget: typeof formData?.budget === "number" ? formData.budget : 0,
-        time_available: timeAvailable,
-        safety_constraints: String(formData?.safetyRequirements || ""),
-        materials: Array.isArray(formData?.preferredMaterials)
-          ? formData.preferredMaterials
-          : [],
-        tools: Array.isArray(formData?.availableTools) ? formData.availableTools : [],
-        sustainability: Boolean(formData?.sustainabilityPriority),
-        estimated_cost:
-          typeof concept?.estimatedCost === "number" ? concept.estimatedCost : null,
-        steps: Array.isArray(steps) ? steps : [],
-        visibility: "private",
-        created_at,
-      };
-
-      savedDesign = await createDesign({
-        title,
-        workflow: steps, // MUST be final steps array
-        constraints: {
-          description:
-            typeof formData?.purpose === "string" && formData.purpose !== "undefined"
-              ? formData.purpose
-              : "",
-          materials: Array.isArray(formData?.preferredMaterials)
-            ? formData.preferredMaterials
-            : [],
-          tools: Array.isArray(formData?.availableTools)
-            ? formData.availableTools
-            : [],
-          notes:
-            typeof formData?.safetyRequirements === "string" &&
-            formData.safetyRequirements !== "undefined"
-              ? formData.safetyRequirements
-              : "",
-          productType:
-            typeof formData?.productType === "string" &&
-            formData.productType !== "undefined"
-              ? formData.productType
-              : "",
-          purpose:
-            typeof formData?.purpose === "string" && formData.purpose !== "undefined"
-              ? formData.purpose
-              : "",
-        },
-        status: "saved",
-        description:
-          typeof formData?.purpose === "string" && formData.purpose !== "undefined"
-            ? formData.purpose
-            : "",
-        feasibilityScore:
-          typeof concept?.feasibilityScore === "number" ? concept.feasibilityScore : null,
-        canonicalDesign,
-      });
-
-    }
-
-    if (!savedDesign?.id) {
-      throw new Error("Design ID missing after save");
-    }
-
-    toast({
-      title: "Design saved",
-      description: `Design "${savedDesign.title}" saved successfully!`,
-    });
-
-    navigate(`/designs/${savedDesign.id}`);
-  } catch (err: any) {
-    toast({
-      title: "Failed to save design",
-      description: err.message || "Unknown error",
-    });
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
 
   const effortColor = (effort: string) => {
@@ -347,35 +233,6 @@ const { user, isGuest } = useAuth();
             <Progress value={progressPercent} className="h-3" />
           </CardContent>
         </Card>
-
-        {/* Materials Optimization Button */}
-        <AnimatePresence>
-          {showMaterialsOptimization && !allCompleted && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mb-6"
-            >
-              <Card className="border-primary/50 bg-primary/5">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Wrench className="w-5 h-5 text-primary" />
-                    <div>
-                      <p className="font-medium text-foreground">Optimize Materials</p>
-                      <p className="text-sm text-muted-foreground">
-                        Find cost-effective alternatives before continuing
-                      </p>
-                    </div>
-                  </div>
-                  <Button variant="gradient" onClick={() => navigate("/design/optimize", { state: { concept } })}>
-                    Optimize Now
-                  </Button>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         {/* Workflow Steps */}
         <Reorder.Group
@@ -571,7 +428,7 @@ const { user, isGuest } = useAuth();
           className="mt-8 flex justify-between"
         >
           <Button variant="outline" onClick={() => navigate(-1)}>
-            Back to Concepts
+            Back to Material Selection
           </Button>
          
   {loading && (
@@ -582,25 +439,14 @@ const { user, isGuest } = useAuth();
 
 
           
-          {allCompleted ? (
-            <Button
-              variant="gradient"
-              className="gap-2"
-              onClick={handleContinue}
-            >
-              Continue
-              <ArrowRight className="w-4 h-4" />
-            </Button>
-          ) : (
-            <Button
-              variant="gradient"
-              className="gap-2"
-              onClick={() => navigate("/design/optimize", { state: { concept } })}
-            >
-              Optimize Materials
-              <ArrowRight className="w-4 h-4" />
-            </Button>
-          )}
+          <Button
+            variant="gradient"
+            className="gap-2"
+            onClick={handleContinue}
+          >
+            {allCompleted ? "Save as Completed" : "Save Design"}
+            <ArrowRight className="w-4 h-4" />
+          </Button>
         </motion.div>
       </div>
     </AppLayout>

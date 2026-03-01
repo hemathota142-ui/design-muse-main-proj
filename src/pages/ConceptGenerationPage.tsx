@@ -115,7 +115,7 @@ export default function ConceptGenerationPage() {
           estimatedCost: concept.estimatedCost,
         });
       }
-      navigate("/design/workflow", { 
+      navigate("/design/optimize", { 
         state: { 
           conceptId: selectedConcept,
           concept

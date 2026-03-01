@@ -1,3 +1,5 @@
+import { ensureGuestSession, getGuestSessionId, guestStorageKey } from "@/lib/guestSession";
+
 // Modular design storage service - can be swapped with API later
 
 export interface SavedDesign {
@@ -51,6 +53,7 @@ export interface MaterialOptimization {
 }
 
 const STORAGE_KEY_PREFIX = "smartdesign_saved_designs";
+const GUEST_STORAGE_NAME = "saved_designs";
 
 // Storage interface - implement this for different backends
 interface StorageAdapter {
@@ -126,8 +129,72 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 }
 
+class SessionStorageAdapter implements StorageAdapter {
+  private getStorageKey(userId: string): string {
+    return guestStorageKey(GUEST_STORAGE_NAME, userId);
+  }
+
+  private getDesigns(userId: string): SavedDesign[] {
+    const data = sessionStorage.getItem(this.getStorageKey(userId));
+    return data ? JSON.parse(data) : [];
+  }
+
+  private setDesigns(userId: string, designs: SavedDesign[]): void {
+    sessionStorage.setItem(this.getStorageKey(userId), JSON.stringify(designs));
+  }
+
+  async getAll(userId: string): Promise<SavedDesign[]> {
+    const designs = this.getDesigns(userId);
+    return designs.sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  async getById(userId: string, id: string): Promise<SavedDesign | null> {
+    const designs = this.getDesigns(userId);
+    return designs.find((d) => d.id === id) || null;
+  }
+
+  async save(userId: string, design: SavedDesign): Promise<SavedDesign> {
+    const designs = this.getDesigns(userId);
+    designs.push(design);
+    this.setDesigns(userId, designs);
+    return design;
+  }
+
+  async update(
+    userId: string,
+    id: string,
+    updates: Partial<SavedDesign>
+  ): Promise<SavedDesign> {
+    const designs = this.getDesigns(userId);
+    const index = designs.findIndex((d) => d.id === id);
+    if (index === -1) throw new Error("Design not found");
+
+    designs[index] = { ...designs[index], ...updates, timestamp: Date.now() };
+    this.setDesigns(userId, designs);
+    return designs[index];
+  }
+
+  async delete(userId: string, id: string): Promise<void> {
+    const designs = this.getDesigns(userId);
+    const filtered = designs.filter((d) => d.id !== id);
+    this.setDesigns(userId, filtered);
+  }
+
+  async search(userId: string, query: string): Promise<SavedDesign[]> {
+    const designs = await this.getAll(userId);
+    const lowerQuery = query.toLowerCase();
+    return designs.filter(
+      (d) =>
+        d.name.toLowerCase().includes(lowerQuery) ||
+        d.data.productType?.toLowerCase().includes(lowerQuery) ||
+        d.data.purpose?.toLowerCase().includes(lowerQuery)
+    );
+  }
+}
+
 // Export singleton instance - swap this for API adapter later
 export const designStorage: StorageAdapter = new LocalStorageAdapter();
+const guestDesignStorage: StorageAdapter = new SessionStorageAdapter();
 
 // Helper to create a new design
 export function createDesign(
@@ -155,9 +222,12 @@ export async function saveGuestDesign(params: {
   };
   canonicalDesign?: any;
   visibility: "public" | "private";
-  userId?: string;
+  status?: string;
 }) {
-  const userId = params.userId || "guest";
+  const sessionId = ensureGuestSession();
+  if (!sessionId) {
+    throw new Error("Guest session unavailable");
+  }
   const created_at = new Date().toISOString();
   const name = params.designDraft.title;
 
@@ -169,12 +239,15 @@ export async function saveGuestDesign(params: {
       visibility: params.visibility,
       created_at,
     },
-    userId
+    sessionId
   );
 
   design.created_at = created_at;
   design.visibility = params.visibility;
-  design.designDraft = params.designDraft;
+  design.designDraft = {
+    ...params.designDraft,
+    status: params.status ?? "saved",
+  };
   const canonicalWithIds = params.canonicalDesign
     ? { ...params.canonicalDesign, id: design.id, created_at }
     : undefined;
@@ -182,7 +255,41 @@ export async function saveGuestDesign(params: {
   design.canonicalDesign = canonicalWithIds;
   design.data.canonicalDesign = canonicalWithIds;
 
-  return designStorage.save(userId, design);
+  return guestDesignStorage.save(sessionId, design);
+}
+
+export async function getGuestDesigns() {
+  const sessionId = getGuestSessionId();
+  if (!sessionId) return [];
+  return guestDesignStorage.getAll(sessionId);
+}
+
+export async function getGuestDesignById(id: string) {
+  const sessionId = getGuestSessionId();
+  if (!sessionId) return null;
+  return guestDesignStorage.getById(sessionId, id);
+}
+
+export async function deleteGuestDesign(id: string) {
+  const sessionId = getGuestSessionId();
+  if (!sessionId) return;
+  await guestDesignStorage.delete(sessionId, id);
+}
+
+export async function updateGuestDesign(id: string, updates: Partial<SavedDesign>) {
+  const sessionId = getGuestSessionId();
+  if (!sessionId) {
+    throw new Error("Guest session unavailable");
+  }
+  return guestDesignStorage.update(sessionId, id, updates);
+}
+
+export async function saveGuestDesignRecord(design: SavedDesign) {
+  const sessionId = getGuestSessionId();
+  if (!sessionId) {
+    throw new Error("Guest session unavailable");
+  }
+  return guestDesignStorage.save(sessionId, design);
 }
 
 // Export design as JSON

@@ -50,8 +50,8 @@ export function AppSidebar() {
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + "/");
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     toast({
       title: "Logged out",
       description: "You've been successfully logged out.",
@@ -210,7 +210,7 @@ export function AppSidebar() {
       {/* Bottom Navigation */}
       <div className="p-3 border-t border-sidebar-border space-y-1">
         {/* User Info */}
-        {user && !isCollapsed && (
+        {(user || isGuest) && !isCollapsed && (
           <NavLink
             to="/profile"
             className="flex items-center gap-3 px-3 py-2 mb-2 rounded-xl hover:bg-sidebar-accent transition-colors"
@@ -220,13 +220,18 @@ export function AppSidebar() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-sidebar-foreground truncate">
-                {user.user_metadata.full_name}
+                {isGuest ? "Guest User" : user?.user_metadata?.full_name}
               </p>
               <p className="text-xs text-sidebar-foreground/60 truncate">
                 {isGuest ? "Guest User" : user.email}
               </p>
             </div>
           </NavLink>
+        )}
+        {isGuest && !isCollapsed && (
+          <p className="px-3 pb-2 text-[11px] text-warning">
+            Guest Mode (data will be lost on logout/close)
+          </p>
         )}
 
         {/* Theme Toggle */}

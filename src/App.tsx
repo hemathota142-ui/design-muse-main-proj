@@ -12,6 +12,7 @@ import { DesignDraftProvider } from "@/contexts/DesignDraftContext";
 // Pages
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import DesignDetailPage from "./pages/DesignDetailPage";
 import DashboardPage from "./pages/DashboardPage";
 import DesignWizardPage from "./pages/DesignWizardPage";
@@ -57,9 +58,7 @@ return (
   <Route path="/" element={<LandingPage />} />
   <Route path="/login" element={<AuthPage mode="login" />} />
   <Route path="/signup" element={<AuthPage mode="signup" />} />
-  <Route path="/design/workflow" element={<WorkflowPage />} />
-<Route path="/design/optimize" element={<MaterialOptimizationPage />} />
-<Route path="/design/preview" element={<DesignCompletePage />} />
+  <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
   {/* Protected Routes */}
   <Route
@@ -73,9 +72,9 @@ return (
   <Route
   path="/designs/:id"
   element={
-    //<ProtectedRoute>
+    <ProtectedRoute>
       <DesignDetailPage />
-    //</ProtectedRoute>
+    </ProtectedRoute>
   }
 />
 
@@ -122,7 +121,7 @@ return (
     }
   />
   <Route
-    path="/design/complete"
+    path="/design/preview"
     element={
       <ProtectedRoute>
         <DesignCompletePage />
@@ -133,7 +132,11 @@ return (
   {/* Feature Pages */}
   <Route
     path="/ai-suggestions"
-    element={<AISuggestionsPage />}
+    element={
+      <ProtectedRoute>
+        <AISuggestionsPage />
+      </ProtectedRoute>
+    }
   />
   <Route
     path="/templates"

@@ -18,15 +18,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import { useToast } from "@/hooks/use-toast";
 import { getMyProfile } from "@/services/profiles.service";
 import { deleteDesign, getMyDesigns, updateDesignVisibility } from "@/services/designs.service";
 
+const avatarOptions = ["😀", "😎", "🧠", "🎨", "🛠️", "🚀", "🌿", "🧩"];
+
 export default function ProfilePage() {
   const { user, isGuest } = useAuth();
+  const { toast } = useToast();
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileBio, setProfileBio] = useState<string | null>(null);
   const [postedDesigns, setPostedDesigns] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"public" | "private">("public");
+  const [savedAvatar, setSavedAvatar] = useState("😀");
+  const [selectedAvatar, setSelectedAvatar] = useState("😀");
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
+  const [isAvatarEditMode, setIsAvatarEditMode] = useState(false);
 
   useEffect(() => {
     if (!user || isGuest) return;
@@ -55,6 +64,16 @@ export default function ProfilePage() {
       isMounted = false;
       window.removeEventListener("designs:updated", handleDesignsUpdated);
     };
+  }, [user, isGuest]);
+
+  useEffect(() => {
+    if (!user || isGuest) return;
+    const avatarFromMeta =
+      typeof user.user_metadata?.avatar === "string" && user.user_metadata.avatar
+        ? user.user_metadata.avatar
+        : "😀";
+    setSavedAvatar(avatarFromMeta);
+    setSelectedAvatar(avatarFromMeta);
   }, [user, isGuest]);
 
   useEffect(() => {
@@ -132,6 +151,33 @@ export default function ProfilePage() {
     });
   };
 
+  const handleSaveAvatar = async () => {
+    if (!user || isGuest) return;
+    if (selectedAvatar === savedAvatar) return;
+    try {
+      setIsSavingAvatar(true);
+      const { error } = await supabase.auth.updateUser({
+        data: { avatar: selectedAvatar },
+      });
+      if (error) throw error;
+      setSavedAvatar(selectedAvatar);
+      setIsAvatarEditMode(false);
+      toast({
+        title: "Avatar updated",
+        description: "Your avatar has been saved.",
+      });
+    } catch (error) {
+      console.error("Failed to update avatar:", error);
+      toast({
+        title: "Update failed",
+        description: "Unable to save avatar. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingAvatar(false);
+    }
+  };
+
   if (isGuest) {
     return (
       <AppLayout>
@@ -164,7 +210,7 @@ export default function ProfilePage() {
             <CardContent className="p-6">
               <div className="flex flex-col md:flex-row md:items-center gap-6">
                 <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center">
-                  <User className="w-12 h-12 text-primary" />
+                  <span className="text-4xl leading-none">{savedAvatar}</span>
                 </div>
                 <div className="flex-1">
                   <h1 className="text-2xl font-bold text-foreground">
@@ -191,13 +237,57 @@ export default function ProfilePage() {
                       {publicDesigns.length} public
                     </div>
                   </div>
+                  {isAvatarEditMode && (
+                    <div className="mt-4">
+                      <p className="text-sm text-muted-foreground mb-2">Change Avatar</p>
+                      <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 max-w-md">
+                        {avatarOptions.map((avatar) => (
+                          <button
+                            key={avatar}
+                            type="button"
+                            onClick={() => setSelectedAvatar(avatar)}
+                            className={cn(
+                              "h-10 w-10 rounded-full border text-lg flex items-center justify-center transition-colors",
+                              selectedAvatar === avatar
+                                ? "border-primary bg-primary/10"
+                                : "border-border hover:border-primary/50"
+                            )}
+                          >
+                            {avatar}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={handleSaveAvatar}
+                          disabled={isSavingAvatar || selectedAvatar === savedAvatar}
+                        >
+                          {isSavingAvatar ? "Saving..." : "Save Avatar"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedAvatar(savedAvatar);
+                            setIsAvatarEditMode(false);
+                          }}
+                          disabled={isSavingAvatar}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <Link to="/settings">
-                  <Button variant="outline" className="gap-2">
-                    <Edit className="w-4 h-4" />
-                    Edit Profile
-                  </Button>
-                </Link>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => setIsAvatarEditMode(true)}
+                >
+                  <Edit className="w-4 h-4" />
+                  Edit Profile
+                </Button>
               </div>
             </CardContent>
           </Card>

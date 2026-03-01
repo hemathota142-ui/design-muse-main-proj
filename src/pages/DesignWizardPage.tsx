@@ -85,13 +85,20 @@ export default function DesignWizardPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
-  const { designDraft, updateDraft } = useDesignDraft();
+  const { designDraft, updateDraft, resetDraft } = useDesignDraft();
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Load template data if coming from templates page
   useEffect(() => {
     const templateData = location.state?.template;
+    const returnToStep = location.state?.returnToStep;
+
+    // Fresh entry into "New Design" should start blank, not with stale persisted selections.
+    if (!templateData && !returnToStep) {
+      resetDraft();
+    }
+
     if (templateData) {
       updateDraft({
         productType: templateData.productType || "",
@@ -100,11 +107,10 @@ export default function DesignWizardPage() {
         preferredMaterials: templateData.preferredMaterials || [],
       });
     }
-    const returnToStep = location.state?.returnToStep;
     if (returnToStep) {
       setCurrentStep(returnToStep);
     }
-  }, [location.state, updateDraft]);
+  }, [location.state, updateDraft, resetDraft]);
 
   const updateFormData = (field: string, value: any) => {
     updateDraft({ [field]: value } as any);

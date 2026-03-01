@@ -60,20 +60,29 @@ export default function AuthPage({ mode }: AuthPageProps) {
       if (mode === "login") {
         await login(formData.email, formData.password);
         localStorage.setItem("auth:last_action", "login");
+        toast({
+          title: "Welcome back!",
+          description: "You've successfully logged in.",
+        });
+        navigate("/dashboard");
       } else {
-        await signup(formData.name, formData.email, formData.password);
+        const { hasSession } = await signup(formData.name, formData.email, formData.password);
         localStorage.setItem("auth:last_action", "signup");
+        const name = formData.name.trim() || "Designer";
+        if (hasSession) {
+          toast({
+            title: `Welcome, ${name}!`,
+            description: "Your account has been created successfully.",
+          });
+          navigate("/dashboard");
+        } else {
+          toast({
+            title: `Welcome, ${name}!`,
+            description: "Account created. Please verify your email, then log in.",
+          });
+          navigate("/login");
+        }
       }
-
-
-      toast({
-        title: mode === "login" ? "Welcome back!" : "Account created!",
-        description: mode === "login" 
-          ? "You've successfully logged in." 
-          : "Your account has been created successfully.",
-      });
-
-      navigate("/dashboard");
     } catch (error: any) {
   let message = "Something went wrong";
 
@@ -89,15 +98,25 @@ export default function AuthPage({ mode }: AuthPageProps) {
   // LOGIN errors
   if (mode === "login") {
     if (error.message?.includes("Invalid login credentials")) {
-      message = "Invalid email or password.";
+      message = "Invalid password. Please try again.";
     } else if (error.message?.includes("Email not confirmed")) {
       message = "Email not confirmed. Check your inbox.";
     }
   }
 
-  // Network / fetch error
-  if (error.message?.includes("Failed to fetch")) {
-    message = "Network issue. Please check your internet.";
+  // Network / connectivity error (often blocked Supabase on shared networks/hotspots)
+  if (
+    error.message?.includes("Failed to fetch") ||
+    error.message?.toLowerCase().includes("networkerror") ||
+    error.message?.toLowerCase().includes("timeout")
+  ) {
+    let supabaseHost = "your-project.supabase.co";
+    try {
+      supabaseHost = new URL(import.meta.env.VITE_SUPABASE_URL || "").host || supabaseHost;
+    } catch {
+      // keep fallback host text
+    }
+    message = `Cannot reach Supabase (${supabaseHost}). Your network may be blocking it. Allow *.supabase.co on port 443, or use a different network/VPN.`;
   }
 
   toast({

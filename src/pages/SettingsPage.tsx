@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   User, 
@@ -23,6 +24,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
 import { getMyProfile, updateMyProfile } from "@/services/profiles.service";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
 
 const settingsSections = [
   { id: "profile", icon: User, label: "Profile" },
@@ -41,13 +43,15 @@ const accentColors = [
 ];
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState("profile");
   const { theme, accentColor, setTheme, setAccentColor } = useTheme();
-  const { user, isGuest } = useAuth();
+  const { user, isGuest, logout } = useAuth();
   const { toast } = useToast();
   const [profileName, setProfileName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [profileBio, setProfileBio] = useState("");
   const [settings, setSettings] = useState({
     emailNotifications: true,
@@ -130,6 +134,88 @@ export default function SettingsPage() {
 
   const updateSetting = (key: string, value: boolean) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user || isGuest) return;
+
+    const shouldDelete = window.confirm(
+      "Delete your account permanently? This will remove your profile and designs and cannot be undone."
+    );
+    if (!shouldDelete) return;
+
+    try {
+      setIsDeletingAccount(true);
+      const { error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) throw refreshError;
+
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!session?.access_token) {
+        throw new Error("Your session has expired. Please log in again.");
+      }
+
+      const { data, error } = await supabase.functions.invoke("delete-account", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: {},
+      });
+      if (error) throw error;
+      if (data?.error) {
+        throw new Error(String(data.error));
+      }
+
+      await logout();
+      toast({
+        title: "Account deleted",
+        description: "Your account has been permanently removed.",
+      });
+      navigate("/signup", { replace: true });
+    } catch (error) {
+      console.error("Failed to delete account:", error);
+      let message =
+        error instanceof Error
+          ? error.message
+          : "Unable to delete account. Please try again.";
+
+      // Supabase FunctionsHttpError includes the Response in `context`.
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "context" in error &&
+        (error as any).context
+      ) {
+        try {
+          const response = (error as any).context as Response;
+          const payload = await response.clone().json().catch(() => null);
+          if (payload?.error) {
+            message = String(payload.error);
+          } else {
+            const text = await response.text();
+            if (text) message = text;
+          }
+        } catch {
+          // Keep existing message if parsing fails.
+        }
+      }
+
+      toast({
+        title: "Delete failed",
+        description: message,
+        variant: "destructive",
+      });
+
+      if (/invalid jwt|jwt/i.test(message)) {
+        await logout();
+        navigate("/login", { replace: true });
+      }
+    } finally {
+      setIsDeletingAccount(false);
+    }
   };
 
   return (
@@ -238,6 +324,7 @@ export default function SettingsPage() {
                       <Button variant="gradient" onClick={handleSaveProfile} disabled={isSavingProfile}>
                         {isSavingProfile ? "Saving..." : "Save Changes"}
                       </Button>
+
                     </>
                   )}
                 </CardContent>
@@ -403,8 +490,15 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="pt-4">
-                    <Button variant="destructive">Delete Account</Button>
+                    <Button
+                      variant="destructive"
+                      onClick={handleDeleteAccount}
+                      disabled={isGuest || isDeletingAccount}
+                    >
+                      {isDeletingAccount ? "Deleting..." : "Delete Account"}
+                    </Button>
                   </div>
+
                 </CardContent>
               </Card>
             )}

@@ -6,9 +6,9 @@ import { Progress } from "@/components/ui/progress";
 
 const analysisSteps = [
   { icon: Brain, label: "Understanding your requirements...", duration: 2000 },
-  { icon: Sparkles, label: "Processing natural language input...", duration: 1500 },
-  { icon: Cpu, label: "Running ML feasibility analysis...", duration: 2500 },
-  { icon: BarChart3, label: "Calculating budget constraints...", duration: 1500 },
+  { icon: Sparkles, label: "Analyzing your design inputs...", duration: 1500 },
+  { icon: Cpu, label: "Working on your design model...", duration: 2500 },
+  { icon: BarChart3, label: "Preparing feasibility insights...", duration: 1500 },
   { icon: Lightbulb, label: "Generating design concepts...", duration: 2000 },
 ];
 
@@ -83,12 +83,8 @@ export default function AIAnalysisPage() {
         </div>
 
         {/* Title */}
-        <h1 className="text-3xl font-bold text-white mb-2">
-          AI Analysis in Progress
-        </h1>
-        <p className="text-white/60 mb-8">
-          Our ML models are analyzing your design requirements
-        </p>
+        <h1 className="text-3xl font-bold text-white mb-2">Design Analysis in Progress</h1>
+        <p className="text-white/60 mb-8">Analyzing your design inputs and constraints</p>
 
         {/* Current Step */}
         <motion.div
