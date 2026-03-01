@@ -80,6 +80,7 @@ const OUT_OF_SCOPE_HINTS = [
 
 const refusalText =
   "I can only help with product design, materials, manufacturing workflow, safety, and cost or effort planning. Ask me about your design and I will help.";
+const OPENAI_TIMEOUT_MS = 20000;
 
 const includesAny = (text: string, words: string[]) =>
   words.some((word) => text.includes(word));
@@ -170,10 +171,15 @@ Deno.serve(async (req) => {
         messages: upstreamMessages,
         temperature: 0.2,
       }),
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
     });
 
     if (!response.ok) {
       const text = await response.text();
+      console.error("OpenAI upstream error", {
+        status: response.status,
+        body: text,
+      });
       return new Response(JSON.stringify({ error: text }), {
         status: 502,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -194,6 +200,25 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const isTimeout =
+      (error instanceof Error && error.name === "TimeoutError") ||
+      message.toLowerCase().includes("timed out");
+    console.error("design-assistant function error", message);
+
+    if (isTimeout) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "AI assistant request timed out. Please try again.",
+        }),
+        {
+          status: 504,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
