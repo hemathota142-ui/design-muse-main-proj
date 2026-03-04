@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   User, 
@@ -37,20 +37,29 @@ const avatarOptions = [
 export default function ProfilePage() {
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileBio, setProfileBio] = useState<string | null>(null);
+  const [profileEmail, setProfileEmail] = useState<string | null>(null);
   const [postedDesigns, setPostedDesigns] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"public" | "private">("public");
   const [savedAvatar, setSavedAvatar] = useState("\u{1F600}");
   const [selectedAvatar, setSelectedAvatar] = useState("\u{1F600}");
   const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [isAvatarEditMode, setIsAvatarEditMode] = useState(false);
+  const viewedUserId = new URLSearchParams(location.search).get("userId");
+  const isViewingOther = Boolean(viewedUserId && user?.id && viewedUserId !== user.id);
 
   useEffect(() => {
     if (!user || isGuest) return;
     let isMounted = true;
 
     const loadDesigns = async () => {
+      if (isViewingOther) {
+        if (isMounted) setPostedDesigns([]);
+        return;
+      }
       try {
         const data = await getMyDesigns(user.id);
         if (isMounted) {
@@ -73,7 +82,7 @@ export default function ProfilePage() {
       isMounted = false;
       window.removeEventListener("designs:updated", handleDesignsUpdated);
     };
-  }, [user, isGuest]);
+  }, [user, isGuest, isViewingOther]);
 
   useEffect(() => {
     if (!user || isGuest) return;
@@ -89,12 +98,41 @@ export default function ProfilePage() {
     if (!user || isGuest) return;
     let isMounted = true;
 
+    const loadViewedProfile = async (targetId: string) => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, bio")
+        .eq("id", targetId)
+        .single();
+
+      if (error || !data) {
+        toast({
+          title: "Profile unavailable",
+          description: "You do not have access to this profile.",
+          variant: "destructive",
+        });
+        navigate("/profile", { replace: true });
+        return;
+      }
+
+      if (isMounted) {
+        setProfileName(data.full_name);
+        setProfileBio(data.bio);
+        setProfileEmail(data.email);
+      }
+    };
+
     const loadProfile = async () => {
       try {
+        if (isViewingOther && viewedUserId) {
+          await loadViewedProfile(viewedUserId);
+          return;
+        }
         const profile = await getMyProfile();
         if (isMounted) {
           setProfileName(profile.full_name);
           setProfileBio(profile.bio);
+          setProfileEmail(profile.email);
         }
       } catch (error) {
         console.error("Failed to load profile:", error);
@@ -113,7 +151,7 @@ export default function ProfilePage() {
       isMounted = false;
       window.removeEventListener("profile:updated", handleProfileUpdated);
     };
-  }, [user, isGuest]);
+  }, [user, isGuest, isViewingOther, viewedUserId, navigate, toast]);
 
   const publicDesigns = postedDesigns.filter((d) => d.visibility === "public");
   const privateDesigns = postedDesigns.filter((d) => d.visibility !== "public");
@@ -230,10 +268,15 @@ export default function ProfilePage() {
                       user?.email?.split("@")[0] ||
                       "Designer"}
                   </h1>
-                  <p className="text-muted-foreground">{user?.email}</p>
+                  <p className="text-muted-foreground">{profileEmail || user?.email}</p>
                   {profileBio && (
                     <p className="text-sm text-muted-foreground mt-2">
                       {profileBio}
+                    </p>
+                  )}
+                  {isViewingOther && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Viewing friend profile (read-only).
                     </p>
                   )}
                   <div className="flex items-center gap-4 mt-3">
@@ -246,7 +289,7 @@ export default function ProfilePage() {
                       {publicDesigns.length} public
                     </div>
                   </div>
-                  {isAvatarEditMode && (
+                  {!isViewingOther && isAvatarEditMode && (
                     <div className="mt-4">
                       <p className="text-sm text-muted-foreground mb-2">Change Avatar</p>
                       <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 max-w-md">
@@ -289,14 +332,16 @@ export default function ProfilePage() {
                     </div>
                   )}
                 </div>
-                <Button
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => setIsAvatarEditMode(true)}
-                >
-                  <Edit className="w-4 h-4" />
-                  Edit Profile
-                </Button>
+                {!isViewingOther && (
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => setIsAvatarEditMode(true)}
+                  >
+                    <Edit className="w-4 h-4" />
+                    Edit Profile
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -347,11 +392,12 @@ export default function ProfilePage() {
         </motion.div>
 
         {/* Designs Tabs */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-        >
+        {!isViewingOther && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+          >
           <div className="flex items-center gap-4 mb-6">
             <h2 className="text-xl font-semibold text-foreground">My Posted Designs</h2>
             <div className="flex rounded-lg border border-border overflow-hidden">
@@ -470,7 +516,8 @@ export default function ProfilePage() {
               </CardContent>
             </Card>
           )}
-        </motion.div>
+          </motion.div>
+        )}
       </div>
     </AppLayout>
   );

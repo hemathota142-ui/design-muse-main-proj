@@ -1,37 +1,29 @@
-import { useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Users, 
-  X, 
-  Search, 
-  UserPlus, 
-  Share2,
-  Eye,
-  MessageCircle,
-  MoreHorizontal
-} from "lucide-react";
+import { Users, X, Search, UserPlus, Check, Ban, RefreshCw, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import {
+  acceptFriendRequest,
+  FriendsServiceError,
+  rejectFriendRequest,
+  sendFriendRequest,
+  type FriendRequestRecord,
+  type FriendRequestStatus,
+} from "@/services/friends.service";
+import { useToast } from "@/hooks/use-toast";
 
-interface Friend {
+type ProfileLite = {
   id: string;
-  name: string;
-  avatar: string;
-  status: "online" | "offline" | "away";
-  lastActive?: string;
-  sharedDesigns: number;
-}
+  display_name: string | null;
+  avatar: string | null;
+};
 
-// Dummy friends data (offline)
-const dummyFriends: Friend[] = [
-  { id: "1", name: "Alex Chen", avatar: "AC", status: "online", sharedDesigns: 5 },
-  { id: "2", name: "Sarah Miller", avatar: "SM", status: "online", sharedDesigns: 3 },
-  { id: "3", name: "James Wilson", avatar: "JW", status: "away", lastActive: "5m ago", sharedDesigns: 8 },
-  { id: "4", name: "Emma Davis", avatar: "ED", status: "offline", lastActive: "2h ago", sharedDesigns: 2 },
-  { id: "5", name: "Michael Brown", avatar: "MB", status: "offline", lastActive: "1d ago", sharedDesigns: 12 },
-  { id: "6", name: "Lisa Johnson", avatar: "LJ", status: "online", sharedDesigns: 6 },
-];
+type FriendshipState = "none" | "pending" | "accepted";
 
 interface FriendsPanelProps {
   isOpen: boolean;
@@ -39,26 +31,219 @@ interface FriendsPanelProps {
 }
 
 export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
+  const { user, isGuest } = useAuth();
+  const { toast } = useToast();
+  const navigate = useNavigate();
 
-  const filteredFriends = dummyFriends.filter(friend =>
-    friend.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const [searchQuery, setSearchQuery] = useState("");
+  const [profiles, setProfiles] = useState<ProfileLite[]>([]);
+  const [friendRows, setFriendRows] = useState<FriendRequestRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+
+  const withActionBusy = async (key: string, action: () => Promise<void>) => {
+    setActionBusy((prev) => ({ ...prev, [key]: true }));
+    try {
+      await action();
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const getDisplayName = (profile: ProfileLite) => profile.display_name || profile.id.slice(0, 8);
+
+  const getInitials = (name: string) => {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "U";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  };
+
+  const refreshData = useCallback(async () => {
+    if (!isOpen || !user?.id || isGuest) {
+      setProfiles([]);
+      setFriendRows([]);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // Safe people discovery source; minimal public fields only.
+      const [profilesRes, friendsRes] = await Promise.all([
+        supabase.rpc("list_people_discovery"),
+        supabase
+          .from("friends")
+          .select("id, requester_id, receiver_id, status, created_at, updated_at")
+          .or(`requester_id.eq.${user.id},receiver_id.eq.${user.id}`),
+      ]);
+
+      if (profilesRes.error) throw profilesRes.error;
+      if (friendsRes.error) throw friendsRes.error;
+
+      const people = ((profilesRes.data ?? []) as ProfileLite[]).filter(
+        (profile) => profile.id !== user.id
+      );
+
+      setProfiles(people);
+      setFriendRows((friendsRes.data ?? []) as FriendRequestRecord[]);
+    } catch (error: any) {
+      console.error("FRIENDS PANEL LOAD ERROR:", error);
+      toast({
+        title: "Unable to load friends data",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isOpen, user?.id, isGuest, toast]);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  const friendshipByUserId = useMemo(() => {
+    const map: Record<string, { state: FriendshipState; status: FriendRequestStatus; requestId: string }> = {};
+
+    if (!user?.id) return map;
+
+    for (const row of friendRows) {
+      const otherUserId = row.requester_id === user.id ? row.receiver_id : row.requester_id;
+      const normalizedState: FriendshipState =
+        row.status === "accepted" ? "accepted" : row.status === "pending" ? "pending" : "none";
+
+      const current = map[otherUserId];
+      if (!current || (current.state !== "accepted" && normalizedState === "accepted")) {
+        map[otherUserId] = { state: normalizedState, status: row.status, requestId: row.id };
+      }
+    }
+
+    return map;
+  }, [friendRows, user?.id]);
+
+  const incomingRequests = useMemo(
+    () => friendRows.filter((row) => row.status === "pending" && user?.id && row.receiver_id === user.id),
+    [friendRows, user?.id]
   );
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "online": return "bg-success";
-      case "away": return "bg-warning";
-      default: return "bg-muted-foreground/50";
+  const outgoingRequests = useMemo(
+    () => friendRows.filter((row) => row.status === "pending" && user?.id && row.requester_id === user.id),
+    [friendRows, user?.id]
+  );
+
+  const profileById = useMemo(
+    () => Object.fromEntries(profiles.map((profile) => [profile.id, profile])),
+    [profiles]
+  );
+
+  const filteredPeople = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return profiles;
+    return profiles.filter((profile) => getDisplayName(profile).toLowerCase().includes(q));
+  }, [profiles, searchQuery]);
+
+  const handleSendRequest = async (receiverId: string) => {
+    await withActionBusy(`send:${receiverId}`, async () => {
+      try {
+        await sendFriendRequest(receiverId);
+        await refreshData();
+        toast({
+          title: "Friend request sent",
+          description: "Your request is pending.",
+        });
+      } catch (error: any) {
+        const message = error instanceof FriendsServiceError ? error.message : "Unable to send request.";
+        toast({
+          title: "Send failed",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    });
+  };
+
+  const handleAccept = async (requestId: string) => {
+    await withActionBusy(`accept:${requestId}`, async () => {
+      try {
+        await acceptFriendRequest(requestId);
+        await refreshData();
+        toast({
+          title: "Friend request accepted",
+          description: "You are now connected.",
+        });
+      } catch (error: any) {
+        const message = error instanceof FriendsServiceError ? error.message : "Unable to accept request.";
+        toast({
+          title: "Accept failed",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    });
+  };
+
+  const handleReject = async (requestId: string) => {
+    await withActionBusy(`reject:${requestId}`, async () => {
+      try {
+        await rejectFriendRequest(requestId);
+        await refreshData();
+        toast({
+          title: "Friend request rejected",
+          description: "The request has been declined.",
+        });
+      } catch (error: any) {
+        const message = error instanceof FriendsServiceError ? error.message : "Unable to reject request.";
+        toast({
+          title: "Reject failed",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    });
+  };
+
+  const handleViewProfile = async (targetUserId: string) => {
+    if (!targetUserId) return;
+
+    if (targetUserId === user?.id) {
+      navigate("/profile");
+      onClose();
+      return;
     }
+
+    await withActionBusy(`view:${targetUserId}`, async () => {
+      try {
+        const { error } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("id", targetUserId)
+          .single();
+
+        if (error) {
+          toast({
+            title: "Profile not accessible",
+            description: "You do not have permission to view this profile.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        navigate(`/profile?userId=${targetUserId}`);
+        onClose();
+      } catch (error: any) {
+        toast({
+          title: "View failed",
+          description: error?.message || "Unable to open profile.",
+          variant: "destructive",
+        });
+      }
+    });
   };
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -67,7 +252,6 @@ export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
             onClick={onClose}
           />
 
-          {/* Panel */}
           <motion.div
             initial={{ x: 300, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
@@ -75,14 +259,13 @@ export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed right-0 top-0 h-full w-80 bg-card border-l border-border shadow-xl z-50 flex flex-col"
           >
-            {/* Header */}
             <div className="p-4 border-b border-border">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Users className="w-5 h-5 text-primary" />
-                  <h2 className="font-semibold text-foreground">Friends</h2>
+                  <h2 className="font-semibold text-foreground">People & Requests</h2>
                   <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs">
-                    {dummyFriends.filter(f => f.status === "online").length} online
+                    {profiles.length} people
                   </span>
                 </div>
                 <button
@@ -93,11 +276,10 @@ export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
                 </button>
               </div>
 
-              {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search friends..."
+                  placeholder="Search people..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-9 h-9"
@@ -105,95 +287,155 @@ export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
               </div>
             </div>
 
-            {/* Friends List */}
             <div className="flex-1 overflow-y-auto p-2">
-              {filteredFriends.map((friend) => (
-                <motion.div
-                  key={friend.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={cn(
-                    "p-3 rounded-xl cursor-pointer transition-colors group",
-                    selectedFriend?.id === friend.id ? "bg-primary/10" : "hover:bg-muted"
-                  )}
-                  onClick={() => setSelectedFriend(friend)}
-                >
-                  <div className="flex items-center gap-3">
-                    {/* Avatar */}
-                    <div className="relative">
-                      <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-sm font-medium text-primary">
-                        {friend.avatar}
-                      </div>
-                      <span className={cn(
-                        "absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card",
-                        getStatusColor(friend.status)
-                      )} />
+              {isGuest && (
+                <div className="p-3 mb-3 rounded-lg border border-warning/30 bg-warning/10 text-sm text-warning-foreground">
+                  Sign in to use friends.
+                </div>
+              )}
+
+              {!isGuest && (
+                <>
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <h3 className="text-sm font-semibold text-foreground">Requests</h3>
+                      <span className="text-xs text-muted-foreground">
+                        {incomingRequests.length} incoming • {outgoingRequests.length} outgoing
+                      </span>
                     </div>
 
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm text-foreground truncate">{friend.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {friend.status === "online" 
-                          ? "Online" 
-                          : friend.lastActive || "Offline"
-                        }
-                      </p>
-                    </div>
+                    <div className="space-y-2">
+                      {incomingRequests.length === 0 && outgoingRequests.length === 0 && (
+                        <p className="text-xs text-muted-foreground px-2 py-1">No pending requests.</p>
+                      )}
 
-                    {/* Actions */}
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                      <button className="p-1.5 rounded-lg hover:bg-background transition-colors">
-                        <MessageCircle className="w-4 h-4 text-muted-foreground" />
-                      </button>
-                      <button className="p-1.5 rounded-lg hover:bg-background transition-colors">
-                        <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
-                      </button>
+                      {incomingRequests.map((request) => {
+                        const profile = profileById[request.requester_id];
+                        const name = profile ? getDisplayName(profile) : request.requester_id.slice(0, 8);
+                        return (
+                          <div key={request.id} className="p-3 rounded-lg border border-border bg-muted/30">
+                            <p className="text-sm text-foreground mb-2">
+                              <span className="font-medium">{name}</span> sent you a request
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1"
+                                disabled={Boolean(actionBusy[`accept:${request.id}`])}
+                                onClick={() => handleAccept(request.id)}
+                              >
+                                <Check className="w-3 h-3" />
+                                Accept
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1"
+                                disabled={Boolean(actionBusy[`reject:${request.id}`])}
+                                onClick={() => handleReject(request.id)}
+                              >
+                                <Ban className="w-3 h-3" />
+                                Reject
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {outgoingRequests.map((request) => {
+                        const profile = profileById[request.receiver_id];
+                        const name = profile ? getDisplayName(profile) : request.receiver_id.slice(0, 8);
+                        return (
+                          <div key={request.id} className="p-3 rounded-lg border border-border bg-muted/30">
+                            <p className="text-sm text-muted-foreground">
+                              Pending request to <span className="font-medium text-foreground">{name}</span>
+                            </p>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {/* Expanded view when selected */}
-                  {selectedFriend?.id === friend.id && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      className="mt-3 pt-3 border-t border-border"
-                    >
-                      <p className="text-xs text-muted-foreground mb-2">
-                        {friend.sharedDesigns} shared designs
-                      </p>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="outline" className="flex-1 gap-1 text-xs">
-                          <Eye className="w-3 h-3" />
-                          View Designs
-                        </Button>
-                        <Button size="sm" variant="outline" className="flex-1 gap-1 text-xs">
-                          <Share2 className="w-3 h-3" />
-                          Share
-                        </Button>
-                      </div>
-                    </motion.div>
-                  )}
-                </motion.div>
-              ))}
+                  <div>
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <h3 className="text-sm font-semibold text-foreground">People</h3>
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={refreshData}>
+                        <RefreshCw className={cn("w-3 h-3", isLoading && "animate-spin")} />
+                      </Button>
+                    </div>
 
-              {filteredFriends.length === 0 && (
-                <div className="text-center py-8">
-                  <Users className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No friends found</p>
-                </div>
+                    <div className="space-y-2">
+                      {filteredPeople.map((profile) => {
+                        const name = getDisplayName(profile);
+                        const state = friendshipByUserId[profile.id]?.state ?? "none";
+                        return (
+                          <div key={profile.id} className="p-3 rounded-lg border border-border bg-card">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-9 h-9 rounded-full bg-primary/15 text-primary text-xs font-semibold flex items-center justify-center">
+                                  {getInitials(name)}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-foreground truncate">{name}</p>
+                                  <p className="text-xs text-muted-foreground truncate">{profile.id}</p>
+                                </div>
+                              </div>
+
+                              {state === "accepted" && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs px-2 py-1 rounded-full bg-success/10 text-success">
+                                    Accepted
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="gap-1"
+                                    disabled={Boolean(actionBusy[`view:${profile.id}`])}
+                                    onClick={() => handleViewProfile(profile.id)}
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    View Profile
+                                  </Button>
+                                </div>
+                              )}
+
+                              {state === "pending" && (
+                                <span className="text-xs px-2 py-1 rounded-full bg-warning/15 text-warning-foreground">
+                                  Pending
+                                </span>
+                              )}
+
+                              {state === "none" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1"
+                                  disabled={Boolean(actionBusy[`send:${profile.id}`])}
+                                  onClick={() => handleSendRequest(profile.id)}
+                                >
+                                  <UserPlus className="w-3 h-3" />
+                                  Add
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {!isLoading && filteredPeople.length === 0 && (
+                        <div className="text-center py-6">
+                          <Users className="w-9 h-9 text-muted-foreground/30 mx-auto mb-2" />
+                          <p className="text-sm text-muted-foreground">No people available.</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            People list uses a minimal safe discovery source.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
               )}
-            </div>
-
-            {/* Add Friend Button */}
-            <div className="p-4 border-t border-border">
-              <Button variant="outline" className="w-full gap-2">
-                <UserPlus className="w-4 h-4" />
-                Add Friend
-              </Button>
-              <p className="text-xs text-muted-foreground text-center mt-2">
-                💡 Friend data is stored offline
-              </p>
             </div>
           </motion.div>
         </>
