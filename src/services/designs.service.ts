@@ -24,10 +24,13 @@ const mapDesignFromDb = (design: any) => {
   const content = (design.content ?? {}) as DesignContent;
   const canonicalDesign = content.design ?? null;
 
+  // Keep `is_public` as source of truth to avoid stale string values.
   const visibility =
-    typeof design.visibility === "string"
-      ? design.visibility
-      : fromDbIsPublic(design.is_public);
+    typeof design.is_public === "boolean"
+      ? fromDbIsPublic(design.is_public)
+      : typeof design.visibility === "string"
+        ? design.visibility
+        : "private";
 
   return {
     ...design,
@@ -56,28 +59,6 @@ const notifyDesignsUpdated = () => {
     window.dispatchEvent(new CustomEvent("designs:updated"));
   }
 };
-
-const migrateWorkflowIfNeeded = async (design: any, userId: string) => {
-  if (!design || !userId) return;
-  const hasWorkflow = Array.isArray(design.workflow) && design.workflow.length > 0;
-  const contentWorkflow = (design.content ?? {}).workflow;
-  const shouldMigrate = !hasWorkflow && Array.isArray(contentWorkflow) && contentWorkflow.length > 0;
-
-  if (!shouldMigrate) return;
-
-  const { error } = await supabase
-    .from("designs")
-    .update({ workflow: contentWorkflow })
-    .eq("id", design.id)
-    .eq("user_id", userId);
-
-  if (error) {
-    console.error("WORKFLOW MIGRATION ERROR:", error);
-  } else {
-    design.workflow = contentWorkflow;
-  }
-};
-
 
 export const updateDesignWorkflow = async (
   designId: string,
@@ -152,9 +133,6 @@ export async function getMyDesigns(userId: string) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  if (data?.length) {
-    await Promise.all(data.map((design) => migrateWorkflowIfNeeded(design, user.id)));
-  }
   return data?.map(mapDesignFromDb);
 }
 
@@ -281,7 +259,6 @@ export async function getDesignById(id: string) {
     return null;
   }
 
-  await migrateWorkflowIfNeeded(data, user.id);
   return mapDesignFromDb(data);
 }
 
@@ -356,7 +333,11 @@ export const updateDesignVisibility = async (
   const { error } = await supabase
     .from("designs")
     // Map UI "public"/"private" to DB `is_public` BOOLEAN for updates.
-    .update({ is_public: toDbIsPublic(visibility), content: nextContent })
+    .update({
+      is_public: toDbIsPublic(visibility),
+      visibility,
+      content: nextContent,
+    })
     .eq("id", id)
     .eq("user_id", user.id);
 

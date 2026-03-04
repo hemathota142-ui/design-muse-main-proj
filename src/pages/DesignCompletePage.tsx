@@ -286,7 +286,7 @@ export default function DesignCompletePage() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Estimated Cost</span>
                   <span className="font-medium text-foreground">
-                    â‚¹{designDraft.estimatedCost?.toLocaleString() || "N/A"}
+                    {"\u20B9"}{designDraft.estimatedCost?.toLocaleString() || "N/A"}
                   </span>
                 </div>
                 <div className="flex justify-between">

@@ -39,9 +39,6 @@ export default function DashboardPage() {
   const [designs, setDesigns] = useState<any[]>([]);
   const [profileName, setProfileName] = useState<string>("");
   const [authGreeting, setAuthGreeting] = useState<"signup" | "login" | "">("");
-  const [animatedTotal, setAnimatedTotal] = useState(0);
-  const [animatedCompleted, setAnimatedCompleted] = useState(0);
-  const [animatedFeasibility, setAnimatedFeasibility] = useState(0);
   const { user, isGuest } = useAuth();
   const totalDesigns = designs.length;
   const resolveStatus = (design: any) => {
@@ -130,23 +127,6 @@ useEffect(() => {
 }, [user, isGuest]);
 
 useEffect(() => {
-  const totalSteps = 24;
-  let step = 0;
-  const timer = window.setInterval(() => {
-    step += 1;
-    const ratio = Math.min(step / totalSteps, 1);
-    setAnimatedTotal(Math.round(totalDesigns * ratio));
-    setAnimatedCompleted(Math.round(completedDesigns * ratio));
-    setAnimatedFeasibility(Math.round((avgFeasibility ?? 0) * ratio));
-    if (ratio >= 1) {
-      window.clearInterval(timer);
-    }
-  }, 20);
-
-  return () => window.clearInterval(timer);
-}, [totalDesigns, completedDesigns, avgFeasibility]);
-
-useEffect(() => {
   if (isGuest) {
     setAuthGreeting("login");
     setProfileName("Guest");
@@ -209,7 +189,7 @@ const greeting =
         <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-1">
-              {greeting} ðŸ‘‹
+              {greeting} 👋
             </h1>
             <p className="text-muted-foreground">
               Smart Design Assistance with AI
@@ -239,7 +219,7 @@ const greeting =
               </div>
               <div className="mt-5">
                 <p className="text-sm font-medium text-muted-foreground">Total Designs</p>
-                <p className="text-3xl font-bold text-foreground mt-1">{animatedTotal}</p>
+                <p className="text-3xl font-bold text-foreground mt-1">{totalDesigns}</p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {totalDesigns === 0 ? "No designs yet - start your first one." : "All saved designs in your workspace."}
                 </p>
@@ -256,7 +236,7 @@ const greeting =
               </div>
               <div className="mt-5">
                 <p className="text-sm font-medium text-muted-foreground">Completed Designs</p>
-                <p className="text-3xl font-bold text-foreground mt-1">{animatedCompleted}</p>
+                <p className="text-3xl font-bold text-foreground mt-1">{completedDesigns}</p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {completedDesigns === 0 ? "No completed designs yet." : "Marked completed/finalized."}
                 </p>
@@ -274,7 +254,7 @@ const greeting =
               <div className="mt-5">
                 <p className="text-sm font-medium text-muted-foreground">Average Feasibility</p>
                 <p className="text-3xl font-bold text-foreground mt-1">
-                  {avgFeasibility === null ? "—" : `${animatedFeasibility}%`}
+                  {avgFeasibility === null ? "—" : `${avgFeasibility}%`}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {avgFeasibility === null ? "N/A until completed designs have scores." : "Based on completed/finalized designs."}
@@ -386,7 +366,7 @@ const greeting =
               <p className="font-medium text-foreground">{title}</p>
               <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                 <span>Feasibility: {feasibility}</span>
-                <span className="text-muted-foreground/50">â€¢</span>
+                <span className="text-muted-foreground/50">•</span>
                 <span className="capitalize">Status: {status}</span>
               </div>
             </div>

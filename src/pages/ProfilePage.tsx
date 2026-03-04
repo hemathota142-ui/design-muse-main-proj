@@ -23,7 +23,16 @@ import { useToast } from "@/hooks/use-toast";
 import { getMyProfile } from "@/services/profiles.service";
 import { deleteDesign, getMyDesigns, updateDesignVisibility } from "@/services/designs.service";
 
-const avatarOptions = ["😀", "😎", "🧠", "🎨", "🛠️", "🚀", "🌿", "🧩"];
+const avatarOptions = [
+  "\u{1F600}",
+  "\u{1F60E}",
+  "\u{1F9E0}",
+  "\u{1F3A8}",
+  "\u{1F6E0}\uFE0F",
+  "\u{1F680}",
+  "\u{1F33F}",
+  "\u{1F9E9}",
+];
 
 export default function ProfilePage() {
   const { user, isGuest } = useAuth();
@@ -32,8 +41,8 @@ export default function ProfilePage() {
   const [profileBio, setProfileBio] = useState<string | null>(null);
   const [postedDesigns, setPostedDesigns] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"public" | "private">("public");
-  const [savedAvatar, setSavedAvatar] = useState("😀");
-  const [selectedAvatar, setSelectedAvatar] = useState("😀");
+  const [savedAvatar, setSavedAvatar] = useState("\u{1F600}");
+  const [selectedAvatar, setSelectedAvatar] = useState("\u{1F600}");
   const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [isAvatarEditMode, setIsAvatarEditMode] = useState(false);
 
@@ -71,7 +80,7 @@ export default function ProfilePage() {
     const avatarFromMeta =
       typeof user.user_metadata?.avatar === "string" && user.user_metadata.avatar
         ? user.user_metadata.avatar
-        : "😀";
+         : "\u{1F600}";
     setSavedAvatar(avatarFromMeta);
     setSelectedAvatar(avatarFromMeta);
   }, [user, isGuest]);
@@ -466,3 +475,4 @@ export default function ProfilePage() {
     </AppLayout>
   );
 }
+

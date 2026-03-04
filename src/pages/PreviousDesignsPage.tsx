@@ -14,8 +14,7 @@ import {
   Copy,
   Eye,
   Edit,
-  Download,
-  FileJson
+  Download
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -32,7 +31,6 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   SavedDesign,
-  downloadDesignJSON,
   getGuestDesigns,
   deleteGuestDesign,
   saveGuestDesignRecord,
@@ -40,6 +38,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
 import { getMyDesigns, deleteDesign } from "@/services/designs.service";
+import { generateFullWorkflowPDF } from "@/utils/pdfExport";
+import type { WorkflowStep } from "@/types/workflow";
 
 const filterOptions = ["All", "Recent", "Oldest"];
 const sortOptions = [
@@ -64,6 +64,11 @@ export default function PreviousDesignsPage() {
   const mapRemoteDesign = (design: any): SavedDesign & { source: "remote" } => {
     const canonical = design?.canonicalDesign ?? design?.content?.design ?? null;
     const constraints = design?.constraints ?? {};
+    const workflow = Array.isArray(design?.workflow)
+      ? design.workflow
+      : Array.isArray(canonical?.steps)
+        ? canonical.steps
+        : [];
     const safeText = (value: any) =>
       typeof value === "string" && value !== "undefined" ? value : "";
 
@@ -90,6 +95,7 @@ export default function PreviousDesignsPage() {
       data: {
         productType,
         purpose,
+        workflowSteps: workflow,
       },
       version: 1,
       userId: design.user_id || "",
@@ -217,10 +223,34 @@ export default function PreviousDesignsPage() {
   };
 
   const handleExport = (design: SavedDesign) => {
-    downloadDesignJSON(design);
+    const rawSteps = Array.isArray(design.data?.workflowSteps)
+      ? design.data.workflowSteps
+      : Array.isArray(design.designDraft?.workflow)
+        ? design.designDraft.workflow
+        : Array.isArray(design.canonicalDesign?.steps)
+          ? design.canonicalDesign.steps
+          : [];
+
+    const steps: WorkflowStep[] = rawSteps
+      .map((step: any, index: number) => ({
+        id: String(step?.id ?? index + 1),
+        title: String(step?.title ?? `Step ${index + 1}`),
+        description: String(step?.description ?? ""),
+        duration: typeof step?.duration === "string" ? step.duration : undefined,
+        effort:
+          step?.effort === "Low" || step?.effort === "Medium" || step?.effort === "High"
+            ? step.effort
+            : undefined,
+        completed: Boolean(step?.completed),
+        materials: Array.isArray(step?.materials) ? step.materials : undefined,
+        safetyNote: typeof step?.safetyNote === "string" ? step.safetyNote : undefined,
+      }))
+      .filter((step) => step.title || step.description);
+
+    generateFullWorkflowPDF(steps, design.name || "Design Workflow");
     toast({
       title: "Design exported",
-      description: `${design.name}.json has been downloaded.`,
+      description: "Workflow PDF is ready to save/download.",
     });
   };
 
@@ -410,8 +440,8 @@ export default function PreviousDesignsPage() {
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleExport(design)}>
-                                <FileJson className="w-4 h-4 mr-2" />
-                                Export JSON
+                                <Download className="w-4 h-4 mr-2" />
+                                Export PDF
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem 
@@ -437,19 +467,30 @@ export default function PreviousDesignsPage() {
                           <span className="text-muted-foreground">v{design.version}</span>
                         </div>
 
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
                             {design.data.productType || "Design"}
                           </span>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={() => handleExport(design)}
-                            className="gap-1"
-                          >
-                            <Download className="w-3 h-3" />
-                            Export
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/designs/${design.id}`)}
+                              className="gap-1"
+                            >
+                              <Eye className="w-3 h-3" />
+                              View
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleExport(design)}
+                              className="gap-1"
+                            >
+                              <Download className="w-3 h-3" />
+                              Export
+                            </Button>
+                          </div>
                         </div>
                       </>
                     ) : (
