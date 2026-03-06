@@ -5,6 +5,7 @@ import {
   Home,
   Activity,
   FolderOpen,
+  Layers,
   Settings,
   LogOut,
   ChevronLeft,
@@ -29,11 +30,12 @@ interface NavItem {
 
 const mainNavItems: NavItem[] = [
   { icon: Home, label: "Dashboard", path: "/dashboard" },
-  { icon: Activity, label: "Activity Feed", path: "/activity-feed" },
-  { icon: FolderOpen, label: "Designs", path: "/designs" },
+  { icon: Sparkles, label: "New Design", path: "/design/new" },
+  { icon: FolderOpen, label: "My Designs", path: "/designs" },
+  { icon: Layers, label: "Templates", path: "/templates" },
   { icon: Users, label: "Friends", path: "/friends", guestBlocked: true },
   { icon: Inbox, label: "Messages", path: "/messages", guestBlocked: true },
-  { icon: UserCircle, label: "Profile", path: "/profile" },
+  { icon: Activity, label: "Activity Feed", path: "/activity-feed" },
 ];
 
 const bottomNavItems: NavItem[] = [

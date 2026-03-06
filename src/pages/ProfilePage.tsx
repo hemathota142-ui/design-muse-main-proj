@@ -12,12 +12,22 @@ import {
   Clock,
   TrendingUp,
   Share2,
-  MessageSquare
+  MessageSquare,
+  Heart,
+  MessageCircle,
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -36,6 +46,19 @@ const avatarOptions = [
   "\u{1F33F}",
   "\u{1F9E9}",
 ];
+
+interface CommentAuthorLite {
+  display_name: string | null;
+  avatar: string | null;
+}
+
+interface DesignCommentRow {
+  id: string;
+  user_id: string;
+  design_id: string;
+  comment_text: string;
+  created_at: string;
+}
 
 export default function ProfilePage() {
   const { user, isGuest } = useAuth();
@@ -56,6 +79,17 @@ export default function ProfilePage() {
   const [friendshipState, setFriendshipState] = useState<"none" | "pending" | "accepted">("none");
   const [isSendingFriendRequest, setIsSendingFriendRequest] = useState(false);
   const [friendsCount, setFriendsCount] = useState(0);
+  const [likeCountByDesignId, setLikeCountByDesignId] = useState<Record<string, number>>({});
+  const [likedByMeByDesignId, setLikedByMeByDesignId] = useState<Record<string, boolean>>({});
+  const [likeBusyByDesignId, setLikeBusyByDesignId] = useState<Record<string, boolean>>({});
+  const [commentCountByDesignId, setCommentCountByDesignId] = useState<Record<string, number>>({});
+  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
+  const [activeCommentDesign, setActiveCommentDesign] = useState<any | null>(null);
+  const [activeComments, setActiveComments] = useState<DesignCommentRow[]>([]);
+  const [isCommentsLoading, setIsCommentsLoading] = useState(false);
+  const [newCommentText, setNewCommentText] = useState("");
+  const [isCommentSubmitting, setIsCommentSubmitting] = useState(false);
+  const [commentAuthorByUserId, setCommentAuthorByUserId] = useState<Record<string, CommentAuthorLite>>({});
   const viewedUserId = routeUserId || new URLSearchParams(location.search).get("userId");
   const isViewingOther = Boolean(viewedUserId && user?.id && viewedUserId !== user.id);
   const profileUserId = isViewingOther && viewedUserId ? viewedUserId : user?.id;
@@ -317,6 +351,133 @@ export default function ProfilePage() {
     };
   }, [user, isGuest, profileUserId]);
 
+  useEffect(() => {
+    if (!user || isGuest) {
+      setLikeCountByDesignId({});
+      setLikedByMeByDesignId({});
+      return;
+    }
+
+    const publicDesignIds = postedDesigns
+      .filter((design) => design.visibility === "public")
+      .map((design) => design.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    if (publicDesignIds.length === 0) {
+      setLikeCountByDesignId({});
+      setLikedByMeByDesignId({});
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadLikes = async () => {
+      const { data, error } = await supabase
+        .from("design_likes")
+        .select("design_id, user_id")
+        .in("design_id", publicDesignIds);
+
+      if (!isMounted) return;
+
+      if (error) {
+        console.error("Failed to load design likes:", error);
+        return;
+      }
+
+      const counts: Record<string, number> = Object.fromEntries(
+        publicDesignIds.map((designId) => [designId, 0])
+      );
+      const liked: Record<string, boolean> = {};
+
+      for (const row of data ?? []) {
+        if (!row?.design_id) continue;
+        counts[row.design_id] = (counts[row.design_id] ?? 0) + 1;
+        if (row.user_id === user.id) {
+          liked[row.design_id] = true;
+        }
+      }
+
+      setLikeCountByDesignId(counts);
+      setLikedByMeByDesignId(liked);
+    };
+
+    loadLikes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [postedDesigns, user, isGuest]);
+
+  useEffect(() => {
+    if (!user || isGuest) {
+      setCommentCountByDesignId({});
+      return;
+    }
+
+    const publicDesignIds = postedDesigns
+      .filter((design) => design.visibility === "public")
+      .map((design) => design.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    if (publicDesignIds.length === 0) {
+      setCommentCountByDesignId({});
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadCommentCounts = async () => {
+      const { data, error } = await supabase
+        .from("design_comments")
+        .select("design_id")
+        .in("design_id", publicDesignIds);
+
+      if (!isMounted) return;
+
+      if (error) {
+        console.error("Failed to load comment counts:", error);
+        return;
+      }
+
+      const counts: Record<string, number> = Object.fromEntries(
+        publicDesignIds.map((designId) => [designId, 0])
+      );
+
+      for (const row of data ?? []) {
+        if (!row?.design_id) continue;
+        counts[row.design_id] = (counts[row.design_id] ?? 0) + 1;
+      }
+
+      setCommentCountByDesignId(counts);
+    };
+
+    loadCommentCounts();
+
+    const commentsChannel = supabase
+      .channel(`design-comments-counts-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "design_comments" },
+        (payload) => {
+          const changedDesignId =
+            (payload.new as any)?.design_id || (payload.old as any)?.design_id;
+          if (!changedDesignId || !publicDesignIds.includes(changedDesignId)) return;
+
+          loadCommentCounts();
+
+          if (isCommentsOpen && activeCommentDesign?.id === changedDesignId) {
+            loadCommentsForDesign(changedDesignId);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(commentsChannel);
+    };
+  }, [postedDesigns, user, isGuest, activeCommentDesign?.id, isCommentsOpen]);
+
   const publicDesigns = postedDesigns.filter((d) => d.visibility === "public");
   const privateDesigns = postedDesigns.filter((d) => d.visibility !== "public");
   const feasibilityValues = postedDesigns
@@ -359,6 +520,162 @@ export default function ProfilePage() {
       0;
     const count = Number(raw);
     return Number.isFinite(count) ? count : 0;
+  };
+
+  const getLikeCount = (design: any): number => {
+    const designId = typeof design?.id === "string" ? design.id : "";
+    if (designId && typeof likeCountByDesignId[designId] === "number") {
+      return likeCountByDesignId[designId];
+    }
+    return resolveLikeCount(design);
+  };
+
+  const handleLikeDesign = async (designId: string) => {
+    if (!user || isGuest || !designId) return;
+    if (likedByMeByDesignId[designId] || likeBusyByDesignId[designId]) return;
+
+    const previousCount = likeCountByDesignId[designId] ?? 0;
+
+    setLikeBusyByDesignId((prev) => ({ ...prev, [designId]: true }));
+    setLikedByMeByDesignId((prev) => ({ ...prev, [designId]: true }));
+    setLikeCountByDesignId((prev) => ({ ...prev, [designId]: (prev[designId] ?? 0) + 1 }));
+
+    const { error } = await supabase.from("design_likes").insert({
+      user_id: user.id,
+      design_id: designId,
+    });
+
+    if (error) {
+      if (error.code === "23505") {
+        // Already liked (race/stale client). Keep liked state and restore count.
+        setLikedByMeByDesignId((prev) => ({ ...prev, [designId]: true }));
+        setLikeCountByDesignId((prev) => ({ ...prev, [designId]: previousCount }));
+        setLikeBusyByDesignId((prev) => ({ ...prev, [designId]: false }));
+        return;
+      }
+      console.error("Failed to like design:", error);
+      setLikedByMeByDesignId((prev) => ({ ...prev, [designId]: false }));
+      setLikeCountByDesignId((prev) => ({ ...prev, [designId]: previousCount }));
+      toast({
+        title: "Like failed",
+        description: "Unable to like this design right now.",
+        variant: "destructive",
+      });
+    }
+
+    setLikeBusyByDesignId((prev) => ({ ...prev, [designId]: false }));
+  };
+
+  const getCommentCount = (designId: string): number => {
+    const count = commentCountByDesignId[designId] ?? 0;
+    return Number.isFinite(count) ? count : 0;
+  };
+
+  const hydrateCommentAuthors = async (userIds: string[]) => {
+    const missingUserIds = userIds.filter((id) => !commentAuthorByUserId[id]);
+    if (missingUserIds.length === 0) return;
+
+    const { data, error } = await supabase.rpc("list_people_discovery");
+    if (error) {
+      console.error("Failed to load comment authors:", error);
+      return;
+    }
+
+    const authorMap: Record<string, CommentAuthorLite> = {};
+    for (const person of (data ?? []) as any[]) {
+      if (!person?.id) continue;
+      authorMap[person.id] = {
+        display_name: person.display_name ?? null,
+        avatar: person.avatar ?? null,
+      };
+    }
+
+    setCommentAuthorByUserId((prev) => ({ ...authorMap, ...prev }));
+  };
+
+  const loadCommentsForDesign = async (designId: string) => {
+    if (!designId) return;
+    setIsCommentsLoading(true);
+
+    const { data, error } = await supabase
+      .from("design_comments")
+      .select("id, user_id, design_id, comment_text, created_at")
+      .eq("design_id", designId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Failed to load comments:", error);
+      setIsCommentsLoading(false);
+      return;
+    }
+
+    const rows = (data ?? []) as DesignCommentRow[];
+    await hydrateCommentAuthors(Array.from(new Set(rows.map((row) => row.user_id).filter(Boolean))));
+    setActiveComments(rows);
+    setIsCommentsLoading(false);
+  };
+
+  const handleOpenComments = async (design: any) => {
+    setActiveCommentDesign(design);
+    setIsCommentsOpen(true);
+    setNewCommentText("");
+    await loadCommentsForDesign(design.id);
+  };
+
+  const handleSubmitComment = async () => {
+    if (!user || isGuest || !activeCommentDesign?.id) return;
+    const text = newCommentText.trim();
+    if (!text) return;
+
+    const designId = activeCommentDesign.id;
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: DesignCommentRow = {
+      id: tempId,
+      user_id: user.id,
+      design_id: designId,
+      comment_text: text,
+      created_at: new Date().toISOString(),
+    };
+
+    setIsCommentSubmitting(true);
+    setNewCommentText("");
+    setActiveComments((prev) => [optimistic, ...prev]);
+    setCommentCountByDesignId((prev) => ({ ...prev, [designId]: (prev[designId] ?? 0) + 1 }));
+
+    const { error } = await supabase.from("design_comments").insert({
+      user_id: user.id,
+      design_id: designId,
+      comment_text: text,
+    });
+
+    if (error) {
+      console.error("Failed to submit comment:", error);
+      setActiveComments((prev) => prev.filter((comment) => comment.id !== tempId));
+      setCommentCountByDesignId((prev) => ({ ...prev, [designId]: Math.max((prev[designId] ?? 1) - 1, 0) }));
+      setNewCommentText(text);
+      toast({
+        title: "Comment failed",
+        description: "Unable to post comment right now.",
+        variant: "destructive",
+      });
+      setIsCommentSubmitting(false);
+      return;
+    }
+
+    await loadCommentsForDesign(designId);
+    setIsCommentSubmitting(false);
+  };
+
+  const formatCommentTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   };
 
   const usernameSource =
@@ -679,7 +996,10 @@ export default function ProfilePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {publicDesigns.map((design, index) => {
                   const previewSrc = resolveDesignPreview(design);
-                  const likes = resolveLikeCount(design);
+                  const likes = getLikeCount(design);
+                  const comments = getCommentCount(design.id);
+                  const likedByMe = Boolean(likedByMeByDesignId[design.id]);
+                  const likeBusy = Boolean(likeBusyByDesignId[design.id]);
                   return (
                     <motion.div
                       key={design.id}
@@ -689,6 +1009,14 @@ export default function ProfilePage() {
                     >
                       <Card className="card-hover">
                         <CardContent className="p-4">
+                          <div className="flex items-center justify-end mb-3">
+                            <Link to={`/designs/${design.id}?mode=read`}>
+                              <Button size="sm" variant="outline">
+                                View
+                              </Button>
+                            </Link>
+                          </div>
+
                           <div className="w-full h-40 rounded-lg overflow-hidden bg-muted mb-3">
                             {previewSrc ? (
                               <img
@@ -708,12 +1036,28 @@ export default function ProfilePage() {
                           </h3>
 
                           <div className="flex items-center justify-between">
-                            <p className="text-sm text-muted-foreground">Likes: {likes}</p>
-                            <Link to={`/designs/${design.id}?mode=read`}>
-                              <Button size="sm" variant="outline">
-                                Open Design
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant={likedByMe ? "default" : "outline"}
+                                className="gap-1.5"
+                                disabled={likedByMe || likeBusy}
+                                onClick={() => handleLikeDesign(design.id)}
+                              >
+                                <Heart className={cn("w-4 h-4", likedByMe && "fill-current")} />
+                                {likeBusy ? "Liking..." : likedByMe ? "Liked" : "Like"}
                               </Button>
-                            </Link>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5"
+                                onClick={() => handleOpenComments(design)}
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                Comment
+                              </Button>
+                            </div>
+                            <p className="text-sm text-muted-foreground">{likes} likes | {comments} comments</p>
                           </div>
                         </CardContent>
                       </Card>
@@ -764,77 +1108,110 @@ export default function ProfilePage() {
 
           {displayedDesigns.length > 0 ? (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {displayedDesigns.map((design, index) => (
-                <motion.div
-                  key={design.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <Card className="card-hover group">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                          <FolderOpen className="w-5 h-5 text-primary" />
+              {displayedDesigns.map((design, index) => {
+                const isPublic = design.visibility === "public";
+                const likes = isPublic ? getLikeCount(design) : 0;
+                const comments = isPublic ? getCommentCount(design.id) : 0;
+                const likedByMe = isPublic ? Boolean(likedByMeByDesignId[design.id]) : false;
+                const likeBusy = isPublic ? Boolean(likeBusyByDesignId[design.id]) : false;
+
+                return (
+                  <motion.div
+                    key={design.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <Card className="card-hover group">
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <FolderOpen className="w-5 h-5 text-primary" />
+                          </div>
+                          <span
+                            className={cn(
+                              "px-2 py-1 rounded-full text-xs",
+                              isPublic ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"
+                            )}
+                          >
+                            {isPublic ? "Public" : "Private"}
+                          </span>
                         </div>
-                        <span
-                          className={cn(
-                            "px-2 py-1 rounded-full text-xs",
-                            design.visibility === "public"
-                              ? "bg-success/10 text-success"
-                              : "bg-muted text-muted-foreground"
-                          )}
-                        >
-                          {design.visibility === "public" ? "Public" : "Private"}
-                        </span>
-                      </div>
-                      
-                      <h3 className="font-semibold text-foreground mb-1">
-                        {design.canonicalDesign?.title || design.title}
-                      </h3>
-                      <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-                        {design.canonicalDesign?.purpose ||
-                          design.constraints?.purpose ||
-                          design.constraints?.productType ||
-                          ""}
-                      </p>
 
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
-                        <Clock className="w-3 h-3" />
-                        {formatDate(new Date(design.created_at).getTime())}
-                      </div>
+                        <h3 className="font-semibold text-foreground mb-1">
+                          {design.canonicalDesign?.title || design.title}
+                        </h3>
+                        <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                          {design.canonicalDesign?.purpose ||
+                            design.constraints?.purpose ||
+                            design.constraints?.productType ||
+                            ""}
+                        </p>
 
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Link to={`/designs/${design.id}`} className="flex-1">
-                          <Button size="sm" variant="ghost" className="w-full gap-1">
-                            <Eye className="w-3 h-3" />
-                            View
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
+                          <Clock className="w-3 h-3" />
+                          {formatDate(new Date(design.created_at).getTime())}
+                        </div>
+
+                        {isPublic && (
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant={likedByMe ? "default" : "outline"}
+                                className="gap-1.5"
+                                disabled={likedByMe || likeBusy}
+                                onClick={() => handleLikeDesign(design.id)}
+                              >
+                                <Heart className={cn("w-4 h-4", likedByMe && "fill-current")} />
+                                {likeBusy ? "Liking..." : likedByMe ? "Liked" : "Like"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5"
+                                onClick={() => handleOpenComments(design)}
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                Comment
+                              </Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{likes} likes | {comments} comments</p>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Link to={`/designs/${design.id}`} className="flex-1">
+                            <Button size="sm" variant="ghost" className="w-full gap-1">
+                              <Eye className="w-3 h-3" />
+                              View
+                            </Button>
+                          </Link>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => toggleVisibility(design.id, design.visibility)}
+                          >
+                            {isPublic ? (
+                              <Lock className="w-3 h-3" />
+                            ) : (
+                              <Globe className="w-3 h-3" />
+                            )}
                           </Button>
-                        </Link>
-                        <Button 
-                          size="sm" 
-                          variant="ghost"
-                          onClick={() => toggleVisibility(design.id, design.visibility)}
-                        >
-                          {design.visibility === "public" ? (
-                            <Lock className="w-3 h-3" />
-                          ) : (
-                            <Globe className="w-3 h-3" />
-                          )}
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="ghost"
-                          className="text-destructive"
-                          onClick={() => handleDelete(design.id)}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive"
+                            onClick={() => handleDelete(design.id)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                );
+              })}
             </div>
           ) : (
             <Card>
@@ -855,6 +1232,90 @@ export default function ProfilePage() {
           </motion.div>
         )}
       </div>
+
+      <Dialog
+        open={isCommentsOpen}
+        onOpenChange={(open) => {
+          setIsCommentsOpen(open);
+          if (!open) {
+            setActiveCommentDesign(null);
+            setActiveComments([]);
+            setNewCommentText("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Comments</DialogTitle>
+            <DialogDescription>
+              {activeCommentDesign?.title || activeCommentDesign?.canonicalDesign?.title || "Public design discussion"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="max-h-[360px] overflow-y-auto space-y-3 pr-1">
+              {isCommentsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading comments...</p>
+              ) : activeComments.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No comments yet. Start the conversation.</p>
+              ) : (
+                activeComments.map((comment) => {
+                  const author = commentAuthorByUserId[comment.user_id];
+                  const authorName =
+                    author?.display_name ||
+                    (comment.user_id === user?.id
+                      ? displayName
+                      : `${comment.user_id.slice(0, 8)}`);
+                  const authorHandle = `@${comment.user_id.slice(0, 8)}`;
+                  const profilePath = comment.user_id === user?.id ? "/profile" : `/profile/${comment.user_id}`;
+
+                  return (
+                    <div key={comment.id} className="rounded-lg border border-border p-3">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <Link to={profilePath} className="flex items-center gap-2 min-w-0">
+                          <Avatar className="w-7 h-7">
+                            {author?.avatar ? <AvatarImage src={author.avatar} alt={authorName} /> : null}
+                            <AvatarFallback className="text-[10px] font-semibold">
+                              {(authorName || "U").slice(0, 2).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{authorName}</p>
+                            <p className="text-[11px] text-muted-foreground truncate">{authorHandle}</p>
+                          </div>
+                        </Link>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatCommentTime(comment.created_at)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-foreground whitespace-pre-wrap break-words">
+                        {comment.comment_text}
+                      </p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Textarea
+                placeholder="Write a comment..."
+                value={newCommentText}
+                onChange={(event) => setNewCommentText(event.target.value)}
+                rows={3}
+              />
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleSubmitComment}
+                  disabled={isCommentSubmitting || !newCommentText.trim()}
+                >
+                  {isCommentSubmitting ? "Posting..." : "Post Comment"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

@@ -255,6 +255,7 @@ export default function DashboardPage() {
   const getActivityMessage = (item: any) => {
     const actor = getDisplayNameForFeedUser(item.user_id);
     if (item.activity_type === "design_liked") return `${actor} liked a design`;
+    if (item.activity_type === "design_commented") return `${actor} commented on a design`;
     return `${actor} shared a new design`;
   };
 
