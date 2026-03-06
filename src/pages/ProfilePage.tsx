@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   User, 
@@ -11,9 +11,11 @@ import {
   Eye,
   Clock,
   TrendingUp,
-  Share2
+  Share2,
+  MessageSquare
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -22,6 +24,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { getMyProfile } from "@/services/profiles.service";
 import { deleteDesign, getMyDesigns, updateDesignVisibility } from "@/services/designs.service";
+import { FriendsServiceError, sendFriendRequest } from "@/services/friends.service";
 
 const avatarOptions = [
   "\u{1F600}",
@@ -39,17 +42,23 @@ export default function ProfilePage() {
   const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
+  const { userId: routeUserId } = useParams<{ userId?: string }>();
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileBio, setProfileBio] = useState<string | null>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
   const [postedDesigns, setPostedDesigns] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"public" | "private">("public");
   const [savedAvatar, setSavedAvatar] = useState("\u{1F600}");
   const [selectedAvatar, setSelectedAvatar] = useState("\u{1F600}");
   const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [isAvatarEditMode, setIsAvatarEditMode] = useState(false);
-  const viewedUserId = new URLSearchParams(location.search).get("userId");
+  const [friendshipState, setFriendshipState] = useState<"none" | "pending" | "accepted">("none");
+  const [isSendingFriendRequest, setIsSendingFriendRequest] = useState(false);
+  const [friendsCount, setFriendsCount] = useState(0);
+  const viewedUserId = routeUserId || new URLSearchParams(location.search).get("userId");
   const isViewingOther = Boolean(viewedUserId && user?.id && viewedUserId !== user.id);
+  const profileUserId = isViewingOther && viewedUserId ? viewedUserId : user?.id;
 
   useEffect(() => {
     if (!user || isGuest) return;
@@ -57,7 +66,35 @@ export default function ProfilePage() {
 
     const loadDesigns = async () => {
       if (isViewingOther) {
-        if (isMounted) setPostedDesigns([]);
+        if (!viewedUserId) {
+          if (isMounted) setPostedDesigns([]);
+          return;
+        }
+        try {
+          const { data, error } = await supabase
+            .from("designs")
+            .select("id, title, description, preview_image, content, created_at, visibility, is_public, feasibility_score, constraints")
+            .eq("user_id", viewedUserId)
+            .eq("visibility", "public")
+            .order("created_at", { ascending: false });
+
+          if (error) throw error;
+
+          if (isMounted) {
+            const normalized = (data ?? []).map((design: any) => ({
+              ...design,
+              feasibilityScore: design?.feasibility_score ?? null,
+              visibility: design?.visibility ?? (design?.is_public ? "public" : "private"),
+              preview_image: design?.preview_image ?? null,
+              content: design?.content ?? {},
+              canonicalDesign: { title: design?.title, purpose: design?.description },
+            }));
+            setPostedDesigns(normalized);
+          }
+        } catch (error) {
+          console.error("Failed to load viewed user's public designs:", error);
+          if (isMounted) setPostedDesigns([]);
+        }
         return;
       }
       try {
@@ -82,7 +119,7 @@ export default function ProfilePage() {
       isMounted = false;
       window.removeEventListener("designs:updated", handleDesignsUpdated);
     };
-  }, [user, isGuest, isViewingOther]);
+  }, [user, isGuest, isViewingOther, viewedUserId]);
 
   useEffect(() => {
     if (!user || isGuest) return;
@@ -99,11 +136,14 @@ export default function ProfilePage() {
     let isMounted = true;
 
     const loadViewedProfile = async (targetId: string) => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, bio")
-        .eq("id", targetId)
-        .single();
+      const [{ data, error }, discoveryRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, full_name, email, bio")
+          .eq("id", targetId)
+          .single(),
+        supabase.rpc("list_people_discovery"),
+      ]);
 
       if (error || !data) {
         toast({
@@ -116,9 +156,11 @@ export default function ProfilePage() {
       }
 
       if (isMounted) {
-        setProfileName(data.full_name);
+        const discovery = ((discoveryRes.data ?? []) as any[]).find((person) => person.id === targetId);
+        setProfileName(data.full_name || discovery?.display_name || null);
         setProfileBio(data.bio);
         setProfileEmail(data.email);
+        setProfileAvatarUrl(discovery?.avatar || null);
       }
     };
 
@@ -133,6 +175,7 @@ export default function ProfilePage() {
           setProfileName(profile.full_name);
           setProfileBio(profile.bio);
           setProfileEmail(profile.email);
+          setProfileAvatarUrl(null);
         }
       } catch (error) {
         console.error("Failed to load profile:", error);
@@ -153,6 +196,127 @@ export default function ProfilePage() {
     };
   }, [user, isGuest, isViewingOther, viewedUserId, navigate, toast]);
 
+  useEffect(() => {
+    if (!user || isGuest || !isViewingOther || !profileUserId) {
+      setFriendshipState("none");
+      return;
+    }
+
+    let isMounted = true;
+    const loadFriendshipState = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("friends")
+          .select("id, status, requester_id, receiver_id, created_at")
+          .or(
+            `and(requester_id.eq.${user.id},receiver_id.eq.${profileUserId}),and(requester_id.eq.${profileUserId},receiver_id.eq.${user.id})`
+          )
+          .order("created_at", { ascending: false });
+
+        if (!isMounted) return;
+        if (error) {
+          setFriendshipState("none");
+          return;
+        }
+
+        const rows = data ?? [];
+        const accepted = rows.find((row) => row.status === "accepted");
+        const pending = rows.find((row) => row.status === "pending");
+        if (accepted) {
+          setFriendshipState("accepted");
+          return;
+        }
+        if (pending) {
+          setFriendshipState("pending");
+          return;
+        }
+        setFriendshipState("none");
+      } catch {
+        if (isMounted) setFriendshipState("none");
+      }
+    };
+
+    loadFriendshipState();
+    const handleFriendsUpdated = () => loadFriendshipState();
+    window.addEventListener("friends:updated", handleFriendsUpdated);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("friends:updated", handleFriendsUpdated);
+    };
+  }, [user, isGuest, isViewingOther, profileUserId]);
+
+  useEffect(() => {
+    if (!user || isGuest || !profileUserId) return;
+    let isMounted = true;
+
+    const loadFriendsCount = async () => {
+      try {
+        const { count, error } = await supabase
+          .from("friends")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "accepted")
+          .or(`requester_id.eq.${profileUserId},receiver_id.eq.${profileUserId}`);
+
+        if (!isMounted) return;
+        if (error) {
+          console.error("Failed to load friends count:", error);
+          return;
+        }
+        setFriendsCount(count ?? 0);
+      } catch (error) {
+        if (!isMounted) return;
+        console.error("Failed to load friends count:", error);
+      }
+    };
+
+    loadFriendsCount();
+
+    const requesterChannel = supabase
+      .channel(`profile-friends-requester-${profileUserId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friends",
+          filter: `requester_id=eq.${profileUserId}`,
+        },
+        () => {
+          loadFriendsCount();
+        }
+      )
+      .subscribe();
+
+    const receiverChannel = supabase
+      .channel(`profile-friends-receiver-${profileUserId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friends",
+          filter: `receiver_id=eq.${profileUserId}`,
+        },
+        () => {
+          loadFriendsCount();
+        }
+      )
+      .subscribe();
+
+    const handleFriendsUpdated = () => {
+      loadFriendsCount();
+    };
+
+    window.addEventListener("friends:updated", handleFriendsUpdated);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("friends:updated", handleFriendsUpdated);
+      supabase.removeChannel(requesterChannel);
+      supabase.removeChannel(receiverChannel);
+    };
+  }, [user, isGuest, profileUserId]);
+
   const publicDesigns = postedDesigns.filter((d) => d.visibility === "public");
   const privateDesigns = postedDesigns.filter((d) => d.visibility !== "public");
   const feasibilityValues = postedDesigns
@@ -166,6 +330,63 @@ export default function ProfilePage() {
     : 0;
 
   const displayedDesigns = activeTab === "public" ? publicDesigns : privateDesigns;
+
+  const resolveDesignPreview = (design: any): string | null => {
+    if (typeof design?.preview_image === "string" && design.preview_image.trim()) {
+      return design.preview_image;
+    }
+    const fromContent = design?.content?.design ?? design?.content ?? {};
+    return (
+      fromContent?.previewImage ||
+      fromContent?.preview_image ||
+      fromContent?.imageUrl ||
+      fromContent?.image_url ||
+      fromContent?.thumbnail ||
+      fromContent?.thumbnailUrl ||
+      fromContent?.image ||
+      null
+    );
+  };
+
+  const resolveLikeCount = (design: any): number => {
+    const fromContent = design?.content?.design ?? design?.content ?? {};
+    const raw =
+      design?.like_count ??
+      design?.likes ??
+      fromContent?.likeCount ??
+      fromContent?.like_count ??
+      fromContent?.likes ??
+      0;
+    const count = Number(raw);
+    return Number.isFinite(count) ? count : 0;
+  };
+
+  const usernameSource =
+    profileName ||
+    user?.user_metadata?.display_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "";
+  const username = usernameSource
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  const displayName =
+    profileName ||
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.display_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "Designer";
+
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "U";
 
   const handleDelete = async (id: string) => {
     if (!user || isGuest) return;
@@ -225,6 +446,29 @@ export default function ProfilePage() {
     }
   };
 
+  const handleAddFriend = async () => {
+    if (!profileUserId || !isViewingOther || friendshipState !== "none") return;
+    try {
+      setIsSendingFriendRequest(true);
+      await sendFriendRequest(profileUserId);
+      setFriendshipState("pending");
+      window.dispatchEvent(new Event("friends:updated"));
+      toast({
+        title: "Friend request sent",
+        description: "Your request is pending.",
+      });
+    } catch (error: any) {
+      const message = error instanceof FriendsServiceError ? error.message : "Unable to send request.";
+      toast({
+        title: "Send failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingFriendRequest(false);
+    }
+  };
+
   if (isGuest) {
     return (
       <AppLayout>
@@ -256,19 +500,17 @@ export default function ProfilePage() {
           <Card>
             <CardContent className="p-6">
               <div className="flex flex-col md:flex-row md:items-center gap-6">
-                <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center">
-                  <span className="text-4xl leading-none">{savedAvatar}</span>
-                </div>
+                <Avatar className="w-24 h-24 rounded-full bg-primary/10">
+                  {isViewingOther && profileAvatarUrl ? (
+                    <AvatarImage src={profileAvatarUrl} alt={displayName} />
+                  ) : null}
+                  <AvatarFallback className="text-4xl leading-none">
+                    {isViewingOther ? initials : savedAvatar}
+                  </AvatarFallback>
+                </Avatar>
                 <div className="flex-1">
-                  <h1 className="text-2xl font-bold text-foreground">
-                    {profileName ||
-                      user?.user_metadata?.full_name ||
-                      user?.user_metadata?.display_name ||
-                      user?.user_metadata?.name ||
-                      user?.email?.split("@")[0] ||
-                      "Designer"}
-                  </h1>
-                  <p className="text-muted-foreground">{profileEmail || user?.email}</p>
+                  <h1 className="text-2xl font-bold text-foreground">{displayName}</h1>
+                  <p className="text-muted-foreground">@{username || "designer"}</p>
                   {profileBio && (
                     <p className="text-sm text-muted-foreground mt-2">
                       {profileBio}
@@ -279,15 +521,13 @@ export default function ProfilePage() {
                       Viewing friend profile (read-only).
                     </p>
                   )}
-                  <div className="flex items-center gap-4 mt-3">
-                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <FolderOpen className="w-4 h-4" />
-                      {postedDesigns.length} designs
-                    </div>
-                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <Globe className="w-4 h-4" />
-                      {publicDesigns.length} public
-                    </div>
+                  <div className="mt-3 space-y-1">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Friends:</span> {friendsCount}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Public Designs:</span> {publicDesigns.length}
+                    </p>
                   </div>
                   {!isViewingOther && isAvatarEditMode && (
                     <div className="mt-4">
@@ -342,6 +582,30 @@ export default function ProfilePage() {
                     Edit Profile
                   </Button>
                 )}
+                {isViewingOther && friendshipState === "none" && (
+                  <Button
+                    variant="outline"
+                    onClick={handleAddFriend}
+                    disabled={isSendingFriendRequest}
+                  >
+                    {isSendingFriendRequest ? "Sending..." : "Add Friend"}
+                  </Button>
+                )}
+                {isViewingOther && friendshipState === "pending" && (
+                  <Button variant="outline" disabled>
+                    Request Pending
+                  </Button>
+                )}
+                {isViewingOther && friendshipState === "accepted" && profileUserId && (
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => navigate(`/messages?friendId=${profileUserId}`)}
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    Message
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -390,6 +654,76 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
         </motion.div>
+
+        {/* Viewed User Public Designs */}
+        {isViewingOther && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-foreground">Public Designs</h2>
+            </div>
+
+            {publicDesigns.length === 0 ? (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <FolderOpen className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-foreground mb-1">
+                    This user has not shared any public designs yet.
+                  </h3>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {publicDesigns.map((design, index) => {
+                  const previewSrc = resolveDesignPreview(design);
+                  const likes = resolveLikeCount(design);
+                  return (
+                    <motion.div
+                      key={design.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                    >
+                      <Card className="card-hover">
+                        <CardContent className="p-4">
+                          <div className="w-full h-40 rounded-lg overflow-hidden bg-muted mb-3">
+                            {previewSrc ? (
+                              <img
+                                src={previewSrc}
+                                alt={design?.title || "Design preview"}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                                <FolderOpen className="w-8 h-8 opacity-60" />
+                              </div>
+                            )}
+                          </div>
+
+                          <h3 className="font-semibold text-foreground mb-2 line-clamp-1">
+                            {design?.canonicalDesign?.title || design?.title || "Untitled design"}
+                          </h3>
+
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-muted-foreground">Likes: {likes}</p>
+                            <Link to={`/designs/${design.id}?mode=read`}>
+                              <Button size="sm" variant="outline">
+                                Open Design
+                              </Button>
+                            </Link>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
 
         {/* Designs Tabs */}
         {!isViewingOther && (
@@ -471,10 +805,12 @@ export default function ProfilePage() {
                       </div>
 
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button size="sm" variant="ghost" className="flex-1 gap-1">
-                          <Eye className="w-3 h-3" />
-                          View
-                        </Button>
+                        <Link to={`/designs/${design.id}`} className="flex-1">
+                          <Button size="sm" variant="ghost" className="w-full gap-1">
+                            <Eye className="w-3 h-3" />
+                            View
+                          </Button>
+                        </Link>
                         <Button 
                           size="sm" 
                           variant="ghost"

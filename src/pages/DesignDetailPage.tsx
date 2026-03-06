@@ -66,7 +66,7 @@ export default function DesignDetailPage() {
   }, [id, user, isGuest]);
 
   const handleUpdateTitle = async () => {
-    if (!design || isReadOnly) return;
+    if (!design || isPageReadOnly) return;
 
     try {
       if (isGuest) {
@@ -84,7 +84,7 @@ export default function DesignDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!design || isReadOnly || !confirm("Delete this design?")) return;
+    if (!design || isPageReadOnly || !confirm("Delete this design?")) return;
 
     try {
       if (isGuest) {
@@ -108,6 +108,8 @@ export default function DesignDetailPage() {
 
   const canonical = design?.canonicalDesign ?? design?.content?.design ?? null;
   const steps = Array.isArray(design?.workflow) ? design.workflow : [];
+  const isOwner = Boolean(!isGuest && user?.id && design?.user_id && design.user_id === user.id);
+  const isPageReadOnly = isReadOnly || (!isGuest && !isOwner);
 
   const formatEffortClass = (effort: string) => {
     const value = (effort || "").toLowerCase();
@@ -145,7 +147,7 @@ export default function DesignDetailPage() {
                     Manufacturing workflow - {steps.length} steps
                   </p>
                 </div>
-                {!isReadOnly && (
+                {!isPageReadOnly && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -167,7 +169,7 @@ export default function DesignDetailPage() {
                 <Download className="w-4 h-4" />
                 Download PDF
               </Button>
-              {!isReadOnly && (
+              {!isPageReadOnly && (
                 <Button variant="destructive" className="gap-2" onClick={handleDelete}>
                   <Trash2 className="w-4 h-4" />
                   Delete Design

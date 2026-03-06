@@ -16,6 +16,7 @@ export interface SavedDesign {
 }
 
 export interface DesignData {
+  previewImage?: string | null;
   productType?: string;
   purpose?: string;
   targetUser?: string;

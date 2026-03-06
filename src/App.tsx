@@ -15,6 +15,7 @@ import AuthPage from "./pages/AuthPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import DesignDetailPage from "./pages/DesignDetailPage";
 import DashboardPage from "./pages/DashboardPage";
+import ActivityFeedPage from "./pages/ActivityFeedPage";
 import DesignWizardPage from "./pages/DesignWizardPage";
 import AIAnalysisPage from "./pages/AIAnalysisPage";
 import ConceptGenerationPage from "./pages/ConceptGenerationPage";
@@ -26,6 +27,8 @@ import AISuggestionsPage from "./pages/AISuggestionsPage";
 import TemplatesPage from "./pages/TemplatesPage";
 import ProfilePage from "./pages/ProfilePage";
 import DesignCompletePage from "./pages/DesignCompletePage";
+import FriendsPage from "./pages/FriendsPage";
+import MessagesPage from "./pages/MessagesPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -66,6 +69,14 @@ return (
     element={
       <ProtectedRoute>
         <DashboardPage />
+      </ProtectedRoute>
+    }
+  />
+  <Route
+    path="/activity-feed"
+    element={
+      <ProtectedRoute>
+        <ActivityFeedPage />
       </ProtectedRoute>
     }
   />
@@ -151,6 +162,30 @@ return (
     element={
       <ProtectedRoute>
         <ProfilePage />
+      </ProtectedRoute>
+    }
+  />
+  <Route
+    path="/profile/:userId"
+    element={
+      <ProtectedRoute>
+        <ProfilePage />
+      </ProtectedRoute>
+    }
+  />
+  <Route
+    path="/friends"
+    element={
+      <ProtectedRoute>
+        <FriendsPage />
+      </ProtectedRoute>
+    }
+  />
+  <Route
+    path="/messages"
+    element={
+      <ProtectedRoute>
+        <MessagesPage />
       </ProtectedRoute>
     }
   />

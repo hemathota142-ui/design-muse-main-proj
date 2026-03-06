@@ -14,12 +14,21 @@ import {
   Copy,
   Eye,
   Edit,
-  Download
+  Download,
+  Share2
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +36,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -38,6 +48,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { GuidedTooltip } from "@/components/ui/guided-tooltip";
 import { getMyDesigns, deleteDesign } from "@/services/designs.service";
+import { buildDesignShareMessage } from "@/services/designShareMessage";
+import { getAcceptedFriendsForUser, sendMessageToFriend, type ChatFriend } from "@/services/messages.service";
 import { generateFullWorkflowPDF } from "@/utils/pdfExport";
 import type { WorkflowStep } from "@/types/workflow";
 
@@ -57,6 +69,11 @@ export default function PreviousDesignsPage() {
   const [sortBy, setSortBy] = useState("newest");
   const [designs, setDesigns] = useState<(SavedDesign & { source: "local" | "remote" | "guest" })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [shareTarget, setShareTarget] = useState<(SavedDesign & { source: "local" | "remote" | "guest" }) | null>(null);
+  const [friends, setFriends] = useState<ChatFriend[]>([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [isSendingToFriendId, setIsSendingToFriendId] = useState<string | null>(null);
   
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
@@ -96,6 +113,16 @@ export default function PreviousDesignsPage() {
         productType,
         purpose,
         workflowSteps: workflow,
+        previewImage:
+          design?.preview_image ||
+          canonical?.previewImage ||
+          canonical?.preview_image ||
+          canonical?.imageUrl ||
+          canonical?.image_url ||
+          canonical?.thumbnail ||
+          canonical?.thumbnailUrl ||
+          canonical?.image ||
+          null,
       },
       version: 1,
       userId: design.user_id || "",
@@ -131,6 +158,31 @@ export default function PreviousDesignsPage() {
 
     loadDesigns();
   }, [user, isGuest]);
+
+  useEffect(() => {
+    if (!isShareOpen || !user?.id || isGuest) return;
+    let isMounted = true;
+    const loadFriends = async () => {
+      setIsLoadingFriends(true);
+      try {
+        const data = await getAcceptedFriendsForUser(user.id);
+        if (isMounted) setFriends(data);
+      } catch (error: any) {
+        if (!isMounted) return;
+        toast({
+          title: "Unable to load friends",
+          description: error?.message || "Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        if (isMounted) setIsLoadingFriends(false);
+      }
+    };
+    loadFriends();
+    return () => {
+      isMounted = false;
+    };
+  }, [isShareOpen, user?.id, isGuest, toast]);
 
   // Filter and sort designs
   const filteredDesigns = designs
@@ -260,6 +312,81 @@ export default function PreviousDesignsPage() {
       month: "short",
       day: "numeric",
     });
+  };
+
+  const getFriendInitials = (name: string) => {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "U";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
+
+  const openShareForDesign = (design: SavedDesign & { source: "local" | "remote" | "guest" }) => {
+    setShareTarget(design);
+    setIsShareOpen(true);
+  };
+
+  const copyShareLink = async () => {
+    if (!shareTarget?.id) return;
+    const shareUrl = `${window.location.origin}/designs/${shareTarget.id}?mode=read`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast({
+        title: "Link copied",
+        description: "Link copied",
+      });
+    } catch (error) {
+      toast({
+        title: "Copy failed",
+        description: "Unable to copy link. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const sendSharedDesignToFriend = async (friendId: string) => {
+    if (!user?.id || isGuest) {
+      toast({
+        title: "Login required",
+        description: "Login first to access this feature.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!shareTarget?.id) {
+      toast({
+        title: "Design unavailable",
+        description: "Unable to share this design right now.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/designs/${shareTarget.id}?mode=read`;
+    const message = buildDesignShareMessage({
+      text: "Shared a design with you",
+      designId: shareTarget.id,
+      title: shareTarget.name || "Untitled design",
+      previewImage: (shareTarget as any)?.data?.previewImage ?? null,
+      url: shareUrl,
+    });
+
+    setIsSendingToFriendId(friendId);
+    try {
+      await sendMessageToFriend(user.id, friendId, message);
+      toast({
+        title: "Sent",
+        description: "Design link sent to your friend.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Send failed",
+        description: error?.message || "Unable to send design right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingToFriendId(null);
+    }
   };
 
   return (
@@ -438,6 +565,10 @@ export default function PreviousDesignsPage() {
                                 <Copy className="w-4 h-4 mr-2" />
                                 Duplicate
                               </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openShareForDesign(design)}>
+                                <Share2 className="w-4 h-4 mr-2" />
+                                Share
+                              </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleExport(design)}>
                                 <Download className="w-4 h-4 mr-2" />
@@ -490,6 +621,15 @@ export default function PreviousDesignsPage() {
                               <Download className="w-3 h-3" />
                               Export
                             </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openShareForDesign(design)}
+                              className="gap-1"
+                            >
+                              <Share2 className="w-3 h-3" />
+                              Share
+                            </Button>
                           </div>
                         </div>
                       </>
@@ -522,6 +662,14 @@ export default function PreviousDesignsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            onClick={() => openShareForDesign(design)}
+                          >
+                            <Share2 className="w-4 h-4 mr-1" />
+                            Share
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => navigate(`/designs/${design.id}`)}
                           >
                             View
@@ -546,6 +694,88 @@ export default function PreviousDesignsPage() {
           </div>
         )}
       </div>
+
+      <Dialog open={isShareOpen} onOpenChange={setIsShareOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Share Design</DialogTitle>
+            <DialogDescription>
+              Copy the design link or send it directly to your friends.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            <section className="space-y-3">
+              <p className="text-sm font-medium text-foreground">Copy Link</p>
+              <Button type="button" variant="outline" onClick={copyShareLink} className="w-full" disabled={!shareTarget?.id}>
+                Copy design URL
+              </Button>
+            </section>
+
+            <section className="space-y-3">
+              <p className="text-sm font-medium text-foreground">Share with Friends</p>
+
+              {isGuest && (
+                <Card>
+                  <CardContent className="py-4 text-sm text-muted-foreground">
+                    Login first to access this feature.
+                  </CardContent>
+                </Card>
+              )}
+
+              {!isGuest && isLoadingFriends && (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <Card key={idx}>
+                      <CardContent className="p-3 flex items-center gap-3">
+                        <Skeleton className="h-10 w-10 rounded-full" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-40" />
+                          <Skeleton className="h-3 w-24" />
+                        </div>
+                        <Skeleton className="h-9 w-28" />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {!isGuest && !isLoadingFriends && friends.length === 0 && (
+                <Card>
+                  <CardContent className="py-4 text-sm text-muted-foreground">
+                    No accepted friends found.
+                  </CardContent>
+                </Card>
+              )}
+
+              {!isGuest && !isLoadingFriends && friends.length > 0 && (
+                <div className="max-h-[340px] overflow-y-auto space-y-2 pr-1">
+                  {friends.map((friend) => (
+                    <Card key={friend.id}>
+                      <CardContent className="p-3 flex items-center gap-3">
+                        <Avatar className="w-10 h-10">
+                          {friend.avatar ? <AvatarImage src={friend.avatar} alt={friend.display_name} /> : null}
+                          <AvatarFallback>{getFriendInitials(friend.display_name)}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate">{friend.display_name}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => sendSharedDesignToFriend(friend.id)}
+                          disabled={Boolean(isSendingToFriendId) || !shareTarget?.id}
+                        >
+                          {isSendingToFriendId === friend.id ? "Sending..." : "Send Design"}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

@@ -127,7 +127,7 @@ export async function getMyDesigns(userId: string) {
   const { data, error } = await supabase
     .from("designs")
     .select(
-      "id, title, description, content, user_id, is_public, visibility, status, created_at, workflow, constraints, feasibility_score"
+      "id, title, description, preview_image, content, user_id, is_public, visibility, status, created_at, workflow, constraints, feasibility_score"
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
@@ -238,6 +238,7 @@ export async function getDesignById(id: string) {
     .select(
       `
       id,
+      user_id,
       title,
       description,
       content,
@@ -251,7 +252,6 @@ export async function getDesignById(id: string) {
       `
     )
     .eq("id", id)
-    .eq("user_id", user.id)
     .single();
 
   if (error) {

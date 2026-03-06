@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { generateFullWorkflowPDF } from "@/utils/pdfExport";
@@ -13,13 +13,25 @@ import {
   PartyPopper
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
 import { createDesign as createRemoteDesign } from "@/services/designs.service";
 import { saveGuestDesign } from "@/services/designStorage";
+import { buildDesignShareMessage } from "@/services/designShareMessage";
+import { getAcceptedFriendsForUser, sendMessageToFriend, type ChatFriend } from "@/services/messages.service";
 import type { Design } from "@/types/design";
 import { useDesignDraft } from "@/contexts/DesignDraftContext";
 
@@ -51,6 +63,12 @@ export default function DesignCompletePage() {
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedDesignId, setLastSavedDesignId] = useState<string | null>(null);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [friends, setFriends] = useState<ChatFriend[]>([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [isSendingToFriendId, setIsSendingToFriendId] = useState<string | null>(null);
+  const [shareTitle, setShareTitle] = useState("Untitled design");
+  const [sharePreviewImage, setSharePreviewImage] = useState<string | null>(null);
   const shareDesignId =
     lastSavedDesignId ||
     (typeof location.state?.designId === "string" ? location.state.designId : null);
@@ -214,6 +232,10 @@ export default function DesignCompletePage() {
   };
 
   const handleShareDesign = async () => {
+    setShareModalOpen(true);
+  };
+
+  const copyShareLink = async () => {
     const shareUrl = shareDesignId
       ? `${window.location.origin}/designs/${shareDesignId}?mode=read`
       : `${window.location.origin}${window.location.pathname}?mode=read`;
@@ -230,6 +252,126 @@ export default function DesignCompletePage() {
         description: "Unable to copy link. Please try again.",
         variant: "destructive",
       });
+    }
+  };
+
+  useEffect(() => {
+    if (!shareModalOpen || !user?.id || isGuest) return;
+
+    let isMounted = true;
+    const loadFriends = async () => {
+      setIsLoadingFriends(true);
+      try {
+        const list = await getAcceptedFriendsForUser(user.id);
+        if (isMounted) setFriends(list);
+      } catch (error: any) {
+        if (!isMounted) return;
+        toast({
+          title: "Unable to load friends",
+          description: error?.message || "Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        if (isMounted) setIsLoadingFriends(false);
+      }
+    };
+
+    loadFriends();
+    return () => {
+      isMounted = false;
+    };
+  }, [shareModalOpen, user?.id, isGuest, toast]);
+
+  useEffect(() => {
+    const fallbackTitle =
+      title ||
+      (typeof designDraft.productName === "string" ? designDraft.productName : "") ||
+      (typeof designDraft.selectedConceptName === "string" ? designDraft.selectedConceptName : "") ||
+      "Untitled design";
+    setShareTitle(fallbackTitle);
+    setSharePreviewImage(null);
+
+    if (!shareDesignId) return;
+    let isMounted = true;
+    const loadDesignForShare = async () => {
+      const { data, error } = await supabase
+        .from("designs")
+        .select("id, title, preview_image, content")
+        .eq("id", shareDesignId)
+        .single();
+
+      if (!isMounted || error || !data) return;
+
+      const fromContent = data.content?.design ?? data.content ?? {};
+      const resolvedPreview =
+        data.preview_image ||
+        fromContent?.previewImage ||
+        fromContent?.preview_image ||
+        fromContent?.imageUrl ||
+        fromContent?.image_url ||
+        fromContent?.thumbnail ||
+        fromContent?.thumbnailUrl ||
+        fromContent?.image ||
+        null;
+      setShareTitle(data.title || fallbackTitle);
+      setSharePreviewImage(typeof resolvedPreview === "string" ? resolvedPreview : null);
+    };
+
+    loadDesignForShare();
+    return () => {
+      isMounted = false;
+    };
+  }, [shareDesignId, title, designDraft.productName, designDraft.selectedConceptName]);
+
+  const getFriendInitials = (name: string) => {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "U";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
+
+  const handleSendDesignToFriend = async (friendId: string) => {
+    if (!user?.id || isGuest) {
+      toast({
+        title: "Login required",
+        description: "Login first to access this feature.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!shareDesignId) {
+      toast({
+        title: "Save design first",
+        description: "Please save this design before sharing with friends.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/designs/${shareDesignId}?mode=read`;
+    const message = buildDesignShareMessage({
+      text: "Shared a design with you",
+      designId: shareDesignId,
+      title: shareTitle,
+      previewImage: sharePreviewImage,
+      url: shareUrl,
+    });
+
+    setIsSendingToFriendId(friendId);
+    try {
+      await sendMessageToFriend(user.id, friendId, message);
+      toast({
+        title: "Sent",
+        description: "Design link sent to your friend.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Send failed",
+        description: error?.message || "Unable to send design right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingToFriendId(null);
     }
   };
 
@@ -433,10 +575,88 @@ export default function DesignCompletePage() {
           </Button>
         </motion.div>
       </div>
+
+      <Dialog open={shareModalOpen} onOpenChange={setShareModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Share Design</DialogTitle>
+            <DialogDescription>
+              Copy the design link or send it directly to your friends.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            <section className="space-y-3">
+              <p className="text-sm font-medium text-foreground">Copy Link</p>
+              <Button type="button" variant="outline" onClick={copyShareLink} className="w-full">
+                Copy design URL
+              </Button>
+            </section>
+
+            <section className="space-y-3">
+              <p className="text-sm font-medium text-foreground">Share with Friends</p>
+
+              {isGuest && (
+                <Card>
+                  <CardContent className="py-4 text-sm text-muted-foreground">
+                    Login first to access this feature.
+                  </CardContent>
+                </Card>
+              )}
+
+              {!isGuest && isLoadingFriends && (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <Card key={idx}>
+                      <CardContent className="p-3 flex items-center gap-3">
+                        <Skeleton className="h-10 w-10 rounded-full" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-40" />
+                          <Skeleton className="h-3 w-24" />
+                        </div>
+                        <Skeleton className="h-9 w-28" />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {!isGuest && !isLoadingFriends && friends.length === 0 && (
+                <Card>
+                  <CardContent className="py-4 text-sm text-muted-foreground">
+                    No accepted friends found.
+                  </CardContent>
+                </Card>
+              )}
+
+              {!isGuest && !isLoadingFriends && friends.length > 0 && (
+                <div className="max-h-[340px] overflow-y-auto space-y-2 pr-1">
+                  {friends.map((friend) => (
+                    <Card key={friend.id}>
+                      <CardContent className="p-3 flex items-center gap-3">
+                        <Avatar className="w-10 h-10">
+                          {friend.avatar ? <AvatarImage src={friend.avatar} alt={friend.display_name} /> : null}
+                          <AvatarFallback>{getFriendInitials(friend.display_name)}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate">{friend.display_name}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => handleSendDesignToFriend(friend.id)}
+                          disabled={Boolean(isSendingToFriendId)}
+                        >
+                          {isSendingToFriendId === friend.id ? "Sending..." : "Send Design"}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }
-
-
-
-

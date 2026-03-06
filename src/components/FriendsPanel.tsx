@@ -167,6 +167,7 @@ export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
       try {
         await acceptFriendRequest(requestId);
         await refreshData();
+        window.dispatchEvent(new Event("friends:updated"));
         toast({
           title: "Friend request accepted",
           description: "You are now connected.",
@@ -228,7 +229,7 @@ export function FriendsPanel({ isOpen, onClose }: FriendsPanelProps) {
           return;
         }
 
-        navigate(`/profile?userId=${targetUserId}`);
+        navigate(`/profile/${targetUserId}`);
         onClose();
       } catch (error: any) {
         toast({
