@@ -37,8 +37,14 @@ export default function MessagesPage() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [linkedDesigns, setLinkedDesigns] = useState<Record<string, { id: string; title: string; previewImage: string | null }>>({});
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectedFriendIdRef = useRef<string | null>(null);
+  const friendIdsRef = useRef<string[]>([]);
+  const userScrolledUpRef = useRef(false);
+  const scrollToBottomOnceRef = useRef(false);
+  const activeConversationLoadRef = useRef(0);
 
   const selectedFriend = useMemo(
     () => friends.find((f) => f.id === selectedFriendId) ?? null,
@@ -46,6 +52,7 @@ export default function MessagesPage() {
   );
   const friendIds = useMemo(() => friends.map((friend) => friend.id), [friends]);
   const friendIdFromQuery = searchParams.get("friendId");
+  const renderedMessages = useMemo(() => messages, [messages]);
 
   const initialsFor = (name: string) => {
     const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -103,12 +110,14 @@ export default function MessagesPage() {
         setMessages([]);
         return;
       }
+      const loadId = ++activeConversationLoadRef.current;
       const silent = Boolean(opts?.silent);
       const markRead = opts?.markRead ?? true;
 
       if (!silent) setIsLoadingMessages(true);
       try {
         const data = await getConversation(user.id, friendId);
+        if (loadId !== activeConversationLoadRef.current) return;
         setMessages(data);
         if (markRead) {
           await markConversationAsRead(user.id, friendId);
@@ -128,8 +137,33 @@ export default function MessagesPage() {
     [user?.id, isGuest, toast]
   );
 
+  const appendIncomingMessage = useCallback((incoming: MessageRecord) => {
+    setMessages((prev) => {
+      if (prev.some((msg) => msg.id === incoming.id)) return prev;
+      const next = [...prev, incoming].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      return next.length > 10 ? next.slice(next.length - 10) : next;
+    });
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesScrollRef.current;
+    if (!container) return;
+    const nearBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 64;
+    userScrolledUpRef.current = !nearBottom;
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesScrollRef.current;
+    if (!container) return;
+    if (scrollToBottomOnceRef.current || !userScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      if (scrollToBottomOnceRef.current) {
+        scrollToBottomOnceRef.current = false;
+        userScrolledUpRef.current = false;
+      }
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -184,9 +218,19 @@ export default function MessagesPage() {
       setMessages([]);
       return;
     }
+    scrollToBottomOnceRef.current = true;
+    userScrolledUpRef.current = false;
     loadConversation(selectedFriendId, { silent: false, markRead: true });
     loadSummaries(friendIds);
   }, [selectedFriendId, loadConversation, loadSummaries, friendIds]);
+
+  useEffect(() => {
+    selectedFriendIdRef.current = selectedFriendId;
+  }, [selectedFriendId]);
+
+  useEffect(() => {
+    friendIdsRef.current = friendIds;
+  }, [friendIds]);
 
   useEffect(() => {
     if (!selectedFriendId) return;
@@ -265,10 +309,10 @@ export default function MessagesPage() {
         (payload) => {
           const incoming = payload.new as MessageRecord;
           const counterpart = incoming.receiver_id;
-          if (counterpart === selectedFriendId) {
-            loadConversation(counterpart, { silent: true, markRead: false });
+          if (counterpart === selectedFriendIdRef.current) {
+            appendIncomingMessage(incoming);
           }
-          loadSummaries(friendIds);
+          loadSummaries(friendIdsRef.current);
         }
       )
       .subscribe();
@@ -286,10 +330,11 @@ export default function MessagesPage() {
         (payload) => {
           const incoming = payload.new as MessageRecord;
           const counterpart = incoming.sender_id;
-          if (counterpart === selectedFriendId) {
-            loadConversation(counterpart, { silent: true, markRead: true });
+          if (counterpart === selectedFriendIdRef.current) {
+            appendIncomingMessage(incoming);
+            markConversationAsRead(user.id, counterpart).catch(() => undefined);
           }
-          loadSummaries(friendIds);
+          loadSummaries(friendIdsRef.current);
         }
       )
       .subscribe();
@@ -298,16 +343,7 @@ export default function MessagesPage() {
       supabase.removeChannel(senderChannel);
       supabase.removeChannel(receiverChannel);
     };
-  }, [user?.id, selectedFriendId, isGuest, loadSummaries, loadConversation, friendIds]);
-
-  useEffect(() => {
-    if (!selectedFriendId || !user?.id || isGuest) return;
-    const timer = setInterval(() => {
-      loadConversation(selectedFriendId, { silent: true, markRead: true });
-      loadSummaries(friendIds);
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [selectedFriendId, user?.id, isGuest, loadConversation, loadSummaries, friendIds]);
+  }, [user?.id, isGuest, loadSummaries, appendIncomingMessage]);
 
   const handleSend = async () => {
     if (!user?.id || !selectedFriendId || isGuest || !draft.trim()) return;
@@ -317,7 +353,6 @@ export default function MessagesPage() {
       const sent = await sendMessageToFriend(user.id, selectedFriendId, draft);
       setMessages((prev) => (prev.some((msg) => msg.id === sent.id) ? prev : [...prev, sent]));
       setDraft("");
-      await loadConversation(selectedFriendId, { silent: true, markRead: false });
       await loadSummaries(friendIds);
       inputRef.current?.focus();
     } catch (error: any) {
@@ -406,7 +441,7 @@ export default function MessagesPage() {
             </CardHeader>
 
             <CardContent className="flex-1 p-0 flex flex-col min-h-0">
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div ref={messagesScrollRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto p-4 space-y-3">
                 {!selectedFriend && (
                   <p className="text-sm text-muted-foreground">Choose a friend from the left list to start chatting.</p>
                 )}
@@ -416,7 +451,7 @@ export default function MessagesPage() {
                 {selectedFriend && !isLoadingMessages && messages.length === 0 && (
                   <p className="text-sm text-muted-foreground">No messages yet. Say hello.</p>
                 )}
-                {messages.map((msg, idx) => {
+                {renderedMessages.map((msg, idx) => {
                   const prev = idx > 0 ? messages[idx - 1] : null;
                   const showDateDivider =
                     !prev ||

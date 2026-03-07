@@ -10,7 +10,6 @@ import {
   Trash2,
   Eye,
   Clock,
-  TrendingUp,
   Share2,
   MessageSquare,
   Heart,
@@ -480,15 +479,6 @@ export default function ProfilePage() {
 
   const publicDesigns = postedDesigns.filter((d) => d.visibility === "public");
   const privateDesigns = postedDesigns.filter((d) => d.visibility !== "public");
-  const feasibilityValues = postedDesigns
-    .map((d) => d.feasibilityScore)
-    .filter((value: any) => typeof value === "number") as number[];
-  const avgFeasibility = feasibilityValues.length
-    ? Math.round(
-        feasibilityValues.reduce((sum, value) => sum + value, 0) /
-          feasibilityValues.length
-      )
-    : 0;
 
   const displayedDesigns = activeTab === "public" ? publicDesigns : privateDesigns;
 
@@ -678,18 +668,6 @@ export default function ProfilePage() {
     });
   };
 
-  const usernameSource =
-    profileName ||
-    user?.user_metadata?.display_name ||
-    user?.user_metadata?.name ||
-    user?.email?.split("@")[0] ||
-    "";
-  const username = usernameSource
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-
   const displayName =
     profileName ||
     user?.user_metadata?.full_name ||
@@ -827,7 +805,9 @@ export default function ProfilePage() {
                 </Avatar>
                 <div className="flex-1">
                   <h1 className="text-2xl font-bold text-foreground">{displayName}</h1>
-                  <p className="text-muted-foreground">@{username || "designer"}</p>
+                  {profileEmail && (
+                    <p className="text-sm text-muted-foreground mt-1">{profileEmail}</p>
+                  )}
                   {profileBio && (
                     <p className="text-sm text-muted-foreground mt-2">
                       {profileBio}
@@ -839,9 +819,6 @@ export default function ProfilePage() {
                     </p>
                   )}
                   <div className="mt-3 space-y-1">
-                    <p className="text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">Friends:</span> {friendsCount}
-                    </p>
                     <p className="text-sm text-muted-foreground">
                       <span className="font-medium text-foreground">Public Designs:</span> {publicDesigns.length}
                     </p>
@@ -960,13 +937,11 @@ export default function ProfilePage() {
           <Card>
             <CardContent className="p-4 flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-warning/10 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-warning" />
+                <User className="w-6 h-6 text-warning" />
               </div>
               <div>
-                        <p className="text-2xl font-bold text-foreground">
-                          {avgFeasibility ? `${avgFeasibility}%` : "0%"}
-                        </p>
-                        <p className="text-sm text-muted-foreground">Avg Feasibility</p>
+                <p className="text-2xl font-bold text-foreground">{friendsCount}</p>
+                <p className="text-sm text-muted-foreground">Friends</p>
               </div>
             </CardContent>
           </Card>

@@ -165,10 +165,29 @@ export async function sendMessageToFriend(
     throw new MessagesServiceError("Message cannot be empty.");
   }
 
+  const {
+    data: { user: authUser },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError) {
+    throw new MessagesServiceError(`Authentication check failed: ${authError.message}`);
+  }
+  if (!authUser?.id) {
+    throw new MessagesServiceError("You must be logged in to send messages.");
+  }
+  if (authUser.id !== userId) {
+    throw new MessagesServiceError("Session mismatch detected. Please refresh and try again.");
+  }
+
+  const canMessage = await areAcceptedFriends(authUser.id, receiverId);
+  if (!canMessage) {
+    throw new MessagesServiceError("You can only message accepted friends.");
+  }
+
   const { data, error } = await supabase
     .from("messages")
     .insert({
-      sender_id: userId,
+      sender_id: authUser.id,
       receiver_id: receiverId,
       message: trimmed,
     })

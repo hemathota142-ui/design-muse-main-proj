@@ -45,13 +45,6 @@ export default function ActivityFeedPage() {
   const [newCommentText, setNewCommentText] = useState("");
   const [isCommentSubmitting, setIsCommentSubmitting] = useState(false);
 
-  const selfDisplayName =
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.display_name ||
-    user?.user_metadata?.name ||
-    user?.email?.split("@")[0] ||
-    "You";
-
   const designIds = useMemo(
     () =>
       Array.from(
@@ -65,7 +58,7 @@ export default function ActivityFeedPage() {
   );
 
   const getDisplayName = (userId: string) => {
-    if (userId === user?.id) return selfDisplayName;
+    if (userId === user?.id) return "You";
     const person = peopleById[userId];
     return person?.display_name || userId.slice(0, 8);
   };
@@ -99,10 +92,14 @@ export default function ActivityFeedPage() {
     const actor = getDisplayName(item.user_id);
     const isOwnDesign = item?.design?.user_id === user?.id;
     const isSelfActor = item?.user_id === user?.id;
+    const designTitle =
+      typeof item?.design?.title === "string" && item.design.title.trim()
+        ? item.design.title.trim()
+        : "Untitled design";
 
     if (item.activity_type === "design_liked") {
-      if (isOwnDesign && !isSelfActor) return `${actor} liked your design`;
-      return `${actor} liked a design`;
+      if (isOwnDesign && !isSelfActor) return `${actor} liked your design "${designTitle}"`;
+      return `${actor} liked "${designTitle}"`;
     }
 
     if (item.activity_type === "design_commented") {
@@ -375,9 +372,11 @@ export default function ActivityFeedPage() {
         ) : (
           <div className="space-y-4">
             {activityFeed.map((item) => {
-              const actorName = getDisplayName(item.user_id);
+              const actorName = item.user_id === user?.id ? "You" : getDisplayName(item.user_id);
               const actorAvatar = item.user_id === user?.id ? null : peopleById[item.user_id]?.avatar ?? null;
               const design = item.design;
+              const isEngagementEvent =
+                item.activity_type === "design_liked" || item.activity_type === "design_commented";
               const designTitle =
                 typeof design?.title === "string" && design.title.trim() ? design.title : "Untitled design";
               const previewSrc = resolveDesignPreview(design);
@@ -401,48 +400,52 @@ export default function ActivityFeedPage() {
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-border p-3 bg-muted/20">
-                      <div className="w-full h-44 rounded-lg overflow-hidden bg-muted mb-3">
-                        {previewSrc ? (
-                          <img src={previewSrc} alt={designTitle} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                            <FolderOpen className="w-8 h-8 opacity-60" />
-                          </div>
-                        )}
+                    {!isEngagementEvent && (
+                      <div className="rounded-xl border border-border p-3 bg-muted/20">
+                        <div className="w-full h-44 rounded-lg overflow-hidden bg-muted mb-3">
+                          {previewSrc ? (
+                            <img src={previewSrc} alt={designTitle} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                              <FolderOpen className="w-8 h-8 opacity-60" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-medium text-foreground line-clamp-1">{designTitle}</p>
+                          {item.design_id && (
+                            <Link to={`/designs/${item.design_id}?mode=read`}>
+                              <Button size="sm" variant="outline">View</Button>
+                            </Link>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-medium text-foreground line-clamp-1">{designTitle}</p>
-                        {item.design_id && (
-                          <Link to={`/designs/${item.design_id}?mode=read`}>
-                            <Button size="sm" variant="outline">View</Button>
-                          </Link>
-                        )}
-                      </div>
-                    </div>
+                    )}
 
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        variant={likedByMe ? "default" : "ghost"}
-                        size="sm"
-                        className="gap-2"
-                        disabled={!designId || likedByMe || likeBusy}
-                        onClick={() => designId && handleLikeDesign(designId)}
-                      >
-                        <Heart className={likedByMe ? "w-4 h-4 fill-current" : "w-4 h-4"} />
-                        {likes}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-2"
-                        disabled={!designId}
-                        onClick={() => designId && handleOpenComments(design)}
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        {comments}
-                      </Button>
-                    </div>
+                    {!isEngagementEvent && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          variant={likedByMe ? "default" : "ghost"}
+                          size="sm"
+                          className="gap-2"
+                          disabled={!designId || likedByMe || likeBusy}
+                          onClick={() => designId && handleLikeDesign(designId)}
+                        >
+                          <Heart className={likedByMe ? "w-4 h-4 fill-current" : "w-4 h-4"} />
+                          {likes}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-2"
+                          disabled={!designId}
+                          onClick={() => designId && handleOpenComments(design)}
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          {comments}
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );

@@ -18,8 +18,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useDesignDraft } from "@/contexts/DesignDraftContext";
 import { getMyDesigns } from "@/services/designs.service";
 import { getGuestDesigns } from "@/services/designStorage";
-import { askDesignAssistant } from "@/services/aiAssistant.service";
 import { useLocation } from "react-router-dom";
+import { getHelpResponse } from "@/data/helpKnowledgeBase";
 
 interface Message {
   id: string;
@@ -29,11 +29,10 @@ interface Message {
 }
 
 const quickPrompts = [
-  "Suggest safer material alternatives",
-  "Estimate cost and effort for 10 units",
-  "Improve workflow for faster assembly",
-  "Reduce manufacturing risks",
-  "Recommend tools for this build",
+  "How do I create a design?",
+  "How do I post a design publicly?",
+  "Can guests save designs?",
+  "How do I comment?",
 ];
 
 export default function AISuggestionsPage() {
@@ -46,7 +45,7 @@ export default function AISuggestionsPage() {
     {
       id: "welcome",
       role: "assistant",
-      content: `Hello${user?.user_metadata?.name ? `, ${user.user_metadata.name}` : ""}!\nI'm your Design Muse assistant for product design, materials, manufacturing workflow, safety, and cost/effort planning. Ask a design-specific question to get started.`,
+      content: "Hi! I'm your design assistant. Ask me anything about creating or managing designs.",
       timestamp: new Date(),
     },
   ]);
@@ -54,6 +53,10 @@ export default function AISuggestionsPage() {
   const [isTyping, setIsTyping] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const hasUserMessage = useMemo(
+    () => messages.some((message) => message.role === "user"),
+    [messages]
+  );
 
   useEffect(() => {
     if (!user?.id) return;
@@ -155,10 +158,8 @@ export default function AISuggestionsPage() {
     };
   }, [designDraft, designs, location.state]);
 
-  const handleSend = async () => {
-    if (!inputValue.trim() || isTyping) return;
-
-    const outgoingText = inputValue.trim();
+  const sendUserMessage = (outgoingText: string) => {
+    if (!outgoingText.trim() || isTyping) return;
     const userMessage: Message = {
       id: `user_${Date.now()}`,
       role: "user",
@@ -170,41 +171,25 @@ export default function AISuggestionsPage() {
     setInputValue("");
     setIsTyping(true);
 
-    try {
-      const conversation = [...messages, userMessage]
-        .filter((msg) => msg.role === "user" || msg.role === "assistant")
-        .slice(-12)
-        .map((msg) => ({ role: msg.role, content: msg.content }));
+    const aiResponse: Message = {
+      id: `ai_${Date.now()}`,
+      role: "assistant",
+      content: getHelpResponse(outgoingText),
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, aiResponse]);
+    setIsTyping(false);
+  };
 
-      const responseText = await askDesignAssistant({
-        messages: conversation,
-        context,
-      });
-
-      const aiResponse: Message = {
-        id: `ai_${Date.now()}`,
-        role: "assistant",
-        content: responseText,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, aiResponse]);
-    } catch (error) {
-      console.error("AI assistant error", error);
-      const fallback: Message = {
-        id: `ai_error_${Date.now()}`,
-        role: "assistant",
-        content: "I couldn't generate a response right now. Please try again in a moment.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, fallback]);
-    } finally {
-      setIsTyping(false);
-    }
+  const handleSend = async () => {
+    if (!inputValue.trim() || isTyping) return;
+    const outgoingText = inputValue.trim();
+    setInputValue("");
+    sendUserMessage(outgoingText);
   };
 
   const handleQuickPrompt = (prompt: string) => {
-    setInputValue(prompt);
+    sendUserMessage(prompt);
   };
 
   const handleCopy = (id: string, content: string) => {
@@ -246,16 +231,17 @@ export default function AISuggestionsPage() {
           transition={{ delay: 0.1 }}
           className="flex flex-wrap items-center gap-2 mb-4"
         >
-          {quickPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              onClick={() => handleQuickPrompt(prompt)}
-              className="px-3 py-1.5 text-sm rounded-full bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Lightbulb className="w-3 h-3 inline-block mr-1" />
-              {prompt}
-            </button>
-          ))}
+          {!hasUserMessage &&
+            quickPrompts.map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => handleQuickPrompt(prompt)}
+                className="px-3 py-1.5 text-sm rounded-full bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Lightbulb className="w-3 h-3 inline-block mr-1" />
+                {prompt}
+              </button>
+            ))}
           <span className="text-xs text-muted-foreground ml-auto">
             {isLoadingContext
               ? "Context: loading..."

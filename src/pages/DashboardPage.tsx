@@ -80,6 +80,11 @@ export default function DashboardPage() {
   const avgFeasibility = feasibilityValues.length
     ? Math.round(feasibilityValues.reduce((sum, value) => sum + value, 0) / feasibilityValues.length)
     : null;
+  const recentDesigns = [...designs].sort((a, b) => {
+    const aTime = new Date(a?.created_at ?? 0).getTime();
+    const bTime = new Date(b?.created_at ?? 0).getTime();
+    return bTime - aTime;
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -261,7 +266,7 @@ export default function DashboardPage() {
 
   return (
     <AppLayout>
-      <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-8">
+      <motion.div variants={containerVariants} initial="hidden" animate="visible" className="flex flex-col gap-8">
         <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-1">{greeting}</h1>
@@ -320,7 +325,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-5">
                 <p className="text-sm font-medium text-muted-foreground">Average Feasibility</p>
-                <p className="text-3xl font-bold text-foreground mt-1">{avgFeasibility === null ? "—" : `${avgFeasibility}%`}</p>
+                <p className="text-3xl font-bold text-foreground mt-1">{avgFeasibility === null ? "ï¿½" : `${avgFeasibility}%`}</p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {avgFeasibility === null ? "N/A until completed designs have scores." : "Based on completed/finalized designs."}
                 </p>
@@ -390,7 +395,7 @@ export default function DashboardPage() {
           </div>
         </motion.div>
 
-        <motion.div variants={itemVariants}>
+        <motion.div variants={itemVariants} className="order-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold text-foreground">Activity Feed</h2>
           </div>
@@ -407,7 +412,7 @@ export default function DashboardPage() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {activityFeed.map((item) => {
+              {activityFeed.slice(0, 3).map((item) => {
                 const actorName = getDisplayNameForFeedUser(item.user_id);
                 const actorAvatar = peopleById[item.user_id]?.avatar ?? null;
                 const design = item.design;
@@ -466,7 +471,7 @@ export default function DashboardPage() {
           )}
         </motion.div>
 
-        <motion.div variants={itemVariants}>
+        <motion.div variants={itemVariants} className="order-1">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold text-foreground">Recent Designs</h2>
             <Link to="/designs" className="text-sm text-primary hover:underline flex items-center gap-1">
@@ -475,12 +480,12 @@ export default function DashboardPage() {
           </div>
 
           <div className="grid gap-4">
-            {designs.length === 0 ? (
+            {recentDesigns.length === 0 ? (
               <Card>
                 <CardContent className="p-6 text-center text-muted-foreground">No designs yet. Create your first one!</CardContent>
               </Card>
             ) : (
-              designs.slice(0, 3).map((design) => {
+              recentDesigns.slice(0, 3).map((design) => {
                 const title = typeof design?.title === "string" ? design.title.trim() : "";
                 const feasibility = typeof design?.feasibilityScore === "number" ? `${design.feasibilityScore}%` : "N/A";
                 const status = typeof design?.status === "string" && design.status.trim() ? design.status : "unknown";
@@ -496,7 +501,7 @@ export default function DashboardPage() {
                           <p className="font-medium text-foreground">{title}</p>
                           <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                             <span>Feasibility: {feasibility}</span>
-                            <span className="text-muted-foreground/50">•</span>
+                            <span className="text-muted-foreground/50">|</span>
                             <span className="capitalize">Status: {status}</span>
                           </div>
                         </div>

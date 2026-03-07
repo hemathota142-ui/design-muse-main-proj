@@ -11,6 +11,11 @@ import { DesignDraftProvider } from "@/contexts/DesignDraftContext";
 
 // Pages
 import LandingPage from "./pages/LandingPage";
+import AboutUsPage from "./pages/AboutUsPage";
+import ContactUsPage from "./pages/ContactUsPage";
+import SupportPage from "./pages/SupportPage";
+import FAQPage from "./pages/FAQPage";
+import CommonIssuesPage from "./pages/CommonIssuesPage";
 import AuthPage from "./pages/AuthPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import DesignDetailPage from "./pages/DesignDetailPage";
@@ -59,6 +64,13 @@ return (
           <Routes>
   {/* Public Routes */}
   <Route path="/" element={<LandingPage />} />
+  <Route path="/about" element={<AboutUsPage />} />
+  <Route path="/contact" element={<ContactUsPage />} />
+  <Route path="/about-us" element={<AboutUsPage />} />
+  <Route path="/contact-us" element={<ContactUsPage />} />
+  <Route path="/support" element={<SupportPage />} />
+  <Route path="/faq" element={<FAQPage />} />
+  <Route path="/common-issues" element={<CommonIssuesPage />} />
   <Route path="/login" element={<AuthPage mode="login" />} />
   <Route path="/signup" element={<AuthPage mode="signup" />} />
   <Route path="/forgot-password" element={<ForgotPasswordPage />} />

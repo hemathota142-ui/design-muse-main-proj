@@ -67,6 +67,7 @@ export default function DesignCompletePage() {
   const [friends, setFriends] = useState<ChatFriend[]>([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
   const [isSendingToFriendId, setIsSendingToFriendId] = useState<string | null>(null);
+  const [hasSavedDesign, setHasSavedDesign] = useState(false);
   const [shareTitle, setShareTitle] = useState("Untitled design");
   const [sharePreviewImage, setSharePreviewImage] = useState<string | null>(null);
   const shareDesignId =
@@ -203,7 +204,12 @@ export default function DesignCompletePage() {
       }
 
       setLastSavedDesignId(data.id);
-      navigate(`/designs/${data.id}`);
+      setHasSavedDesign(true);
+      setShareModalOpen(true);
+      toast({
+        title: "Design saved",
+        description: "Now you can share it with friends before leaving this page.",
+      });
     } catch (error) {
       console.error(error);
       toast({
@@ -569,9 +575,9 @@ export default function DesignCompletePage() {
           <Button 
             variant="ghost" 
             className="w-full"
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate(hasSavedDesign ? "/designs" : "/dashboard")}
           >
-            Return to Dashboard
+            {hasSavedDesign ? "Go to My Designs" : "Return to Dashboard"}
           </Button>
         </motion.div>
       </div>
