@@ -1,0 +1,11 @@
+﻿{
+  "productType": "Smart Furniture",
+  "purpose": "Compact storage for students",
+  "materials": ["Aluminum", "ABS Plastic"],
+  "tools": ["CNC Machine", "Hand Tools"],
+  "skillLevel": "Intermediate",
+  "budget": 12000,
+  "timeWeeks": 8,
+  "safetyRequirements": "Ensure stable structure and safe edges",
+  "sustainabilityPriority": true
+}

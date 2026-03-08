@@ -14,6 +14,7 @@ import {
   Inbox,
   UserCircle,
   Users,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ interface NavItem {
 const mainNavItems: NavItem[] = [
   { icon: Home, label: "Dashboard", path: "/dashboard" },
   { icon: Sparkles, label: "New Design", path: "/design/new" },
+  { icon: Bot, label: "Chatbot", path: "/ai-suggestions" },
   { icon: FolderOpen, label: "My Designs", path: "/designs" },
   { icon: Layers, label: "Templates", path: "/templates" },
   { icon: Users, label: "Friends", path: "/friends", guestBlocked: true },

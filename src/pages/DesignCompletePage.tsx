@@ -205,10 +205,9 @@ export default function DesignCompletePage() {
 
       setLastSavedDesignId(data.id);
       setHasSavedDesign(true);
-      setShareModalOpen(true);
       toast({
         title: "Design saved",
-        description: "Now you can share it with friends before leaving this page.",
+        description: "Your design has been saved successfully.",
       });
     } catch (error) {
       console.error(error);
@@ -238,6 +237,15 @@ export default function DesignCompletePage() {
   };
 
   const handleShareDesign = async () => {
+    if (!shareDesignId) {
+      toast({
+        title: "Save required",
+        description: "Please save your design before sharing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setShareModalOpen(true);
   };
 

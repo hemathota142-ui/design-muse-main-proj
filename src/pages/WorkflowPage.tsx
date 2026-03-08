@@ -29,6 +29,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import * as designStepsService from "@/services/designSteps.service";
+
+const designStepsServiceCompat = {
+  generateSteps: designStepsService.generateDesignSteps,
+};
 
 
   
@@ -110,13 +115,100 @@ export default function WorkflowPage() {
 const { user, isGuest } = useAuth();
   const { designDraft, updateDraft } = useDesignDraft();
   const concept = location.state?.concept;
+  const modelWorkflowSteps = Array.isArray(location.state?.workflowSteps)
+    ? location.state.workflowSteps
+    : Array.isArray(designDraft.workflowSteps)
+      ? designDraft.workflowSteps
+      : [];
   console.log("WorkflowPage concept:", concept);
   const formData = designDraft;
   
-  const [steps, setSteps] = useState<WorkflowStep[]>(() => generateWorkflowSteps(concept, formData));
+  const [steps, setSteps] = useState<WorkflowStep[]>(() =>
+    modelWorkflowSteps.length > 0
+      ? (modelWorkflowSteps as WorkflowStep[])
+      : generateWorkflowSteps(concept, formData)
+  );
   const [expandedStep, setExpandedStep] = useState<string | null>("1");
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+
+  const generationPayload = useMemo(() => ({
+    productType: (designDraft.customProductType || designDraft.productType || concept?.name || "").trim(),
+    purpose: designDraft.purpose,
+    targetUser: (designDraft.customTargetUser || designDraft.targetUser || "").trim(),
+    environment: (designDraft.customEnvironment || designDraft.environment || "").trim(),
+    skillLevel: designDraft.skillLevel,
+    budget: designDraft.budget,
+    timeWeeks: Array.isArray(designDraft.timeWeeks) ? (designDraft.timeWeeks[0] ?? "") : designDraft.timeWeeks,
+    safetyRequirements: designDraft.safetyRequirements,
+    preferredMaterials: Array.isArray(concept?.recommendedMaterials)
+      ? concept.recommendedMaterials
+      : Array.isArray(concept?.materials)
+        ? concept.materials
+        : Array.isArray(designDraft.preferredMaterials)
+          ? designDraft.preferredMaterials
+          : [],
+    availableTools: Array.isArray(designDraft.availableTools) ? designDraft.availableTools : [],
+    sustainabilityPriority: designDraft.sustainabilityPriority,
+  }), [
+    concept?.name,
+    designDraft.customProductType,
+    designDraft.productType,
+    designDraft.purpose,
+    designDraft.customTargetUser,
+    designDraft.targetUser,
+    designDraft.customEnvironment,
+    designDraft.environment,
+    designDraft.skillLevel,
+    designDraft.budget,
+    Array.isArray(designDraft.timeWeeks) ? designDraft.timeWeeks[0] : designDraft.timeWeeks,
+    designDraft.safetyRequirements,
+    Array.isArray(concept?.recommendedMaterials) ? concept.recommendedMaterials.join("|") : "",
+    Array.isArray(concept?.materials) ? concept.materials.join("|") : "",
+    designDraft.preferredMaterials,
+    designDraft.availableTools,
+    designDraft.sustainabilityPriority,
+  ]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const generate = async () => {
+      if (modelWorkflowSteps.length > 0) {
+        if (isMounted) {
+          setSteps(modelWorkflowSteps as WorkflowStep[]);
+        }
+        return;
+      }
+
+      try {
+        const generatedSteps = await designStepsServiceCompat.generateSteps(generationPayload);
+
+        if (isMounted && Array.isArray(generatedSteps) && generatedSteps.length > 0) {
+          setSteps(generatedSteps as WorkflowStep[]);
+          return;
+        }
+      } catch (_error) {
+        // Fallback to previous local generator when service/API fails.
+      }
+
+      if (isMounted) {
+        setSteps(generateWorkflowSteps(concept, designDraft));
+      }
+    };
+
+    generate();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    generationPayload,
+    concept?.name,
+    Array.isArray(concept?.materials) ? concept.materials.join("|") : "",
+    Array.isArray(concept?.recommendedMaterials) ? concept.recommendedMaterials.join("|") : "",
+    modelWorkflowSteps,
+  ]);
 
   const completedCount = steps.filter((s) => s.completed).length;
   const progressPercent = (completedCount / steps.length) * 100;

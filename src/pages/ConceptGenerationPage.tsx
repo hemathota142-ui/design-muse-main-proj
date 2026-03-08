@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   Check, 
@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useDesignDraft } from "@/contexts/DesignDraftContext";
+import { generateDesignData, type DesignOption } from "@/services/designGenerator.service";
 
 // Generate concepts based on input data
 const generateConcepts = (formData?: any) => {
@@ -62,34 +63,59 @@ const generateConcepts = (formData?: any) => {
 
 export default function ConceptGenerationPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { designDraft, updateDraft } = useDesignDraft();
   
-  const [concepts, setConcepts] = useState(generateConcepts(designDraft));
+  const [concepts, setConcepts] = useState<DesignOption[]>(
+    Array.isArray(location.state?.designOptions) && location.state.designOptions.length === 3
+      ? location.state.designOptions
+      : (generateConcepts(designDraft) as DesignOption[])
+  );
   const [selectedConcept, setSelectedConcept] = useState<number | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+
+  const generationPayload = {
+    productType: (designDraft.customProductType || designDraft.productType || "").trim(),
+    purpose: designDraft.purpose,
+    targetUser: (designDraft.customTargetUser || designDraft.targetUser || "").trim(),
+    environment: (designDraft.customEnvironment || designDraft.environment || "").trim(),
+    skillLevel: designDraft.skillLevel,
+    budget: designDraft.budget,
+    timeWeeks: Array.isArray(designDraft.timeWeeks) ? designDraft.timeWeeks[0] ?? "" : designDraft.timeWeeks,
+    safetyRequirements: designDraft.safetyRequirements,
+    preferredMaterials: designDraft.preferredMaterials,
+    availableTools: designDraft.availableTools,
+    sustainabilityPriority: designDraft.sustainabilityPriority,
+  };
+
+  useEffect(() => {
+    if (Array.isArray(location.state?.designOptions) && location.state.designOptions.length === 3) {
+      setConcepts(location.state.designOptions as DesignOption[]);
+      setSelectedConcept(null);
+    }
+  }, [location.state]);
 
   const handleRegenerate = async () => {
     setIsRegenerating(true);
     setSelectedConcept(null);
-    
-    // Simulate AI regeneration
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    
-    // Generate new randomized concepts
-    const newConcepts = generateConcepts(designDraft).map(concept => ({
-      ...concept,
-      feasibilityScore: Math.floor(Math.random() * 20) + 75,
-      estimatedCost: concept.estimatedCost + Math.floor(Math.random() * 5000) - 2500
-    }));
-    
-    setConcepts(newConcepts);
-    setIsRegenerating(false);
-    
-    toast({
-      title: "Concepts regenerated",
-      description: "New design concepts have been generated based on your constraints."
-    });
+
+    try {
+      const result = await generateDesignData(generationPayload);
+      setConcepts(result.designOptions);
+      toast({
+        title: "Concepts regenerated",
+        description: "New design concepts have been generated based on your constraints."
+      });
+    } catch (_error) {
+      toast({
+        title: "Regeneration failed",
+        description: "Unable to fetch new model outputs right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRegenerating(false);
+    }
   };
 
   const handleModifyConstraints = () => {
@@ -107,21 +133,28 @@ export default function ConceptGenerationPage() {
       return;
     }
 
-    if (selectedConcept) {
-      const concept = concepts.find(c => c.id === selectedConcept);
-      if (concept) {
-        updateDraft({
-          selectedConceptName: concept.name,
-          estimatedCost: concept.estimatedCost,
-        });
-      }
+    if (!selectedConcept) return;
+    const concept = concepts.find(c => c.id === selectedConcept);
+    if (!concept) return;
+
+    const continueWithSelection = (workflowSteps: any[] = []) => {
+      updateDraft({
+        selectedConceptName: concept.name,
+        estimatedCost: concept.estimatedCost,
+        workflowSteps,
+      });
       navigate("/design/optimize", { 
         state: { 
           conceptId: selectedConcept,
-          concept
+          concept,
+          workflowSteps,
         } 
       });
-    }
+    };
+
+    generateDesignData(generationPayload, concept)
+      .then((result) => continueWithSelection(result.workflowSteps))
+      .catch(() => continueWithSelection());
   };
 
   return (

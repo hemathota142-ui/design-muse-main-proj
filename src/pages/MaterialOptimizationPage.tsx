@@ -93,6 +93,9 @@ export default function MaterialOptimizationPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const concept = location.state?.concept;
+  const workflowSteps = Array.isArray(location.state?.workflowSteps)
+    ? location.state.workflowSteps
+    : [];
   const { designDraft } = useDesignDraft();
   const [suggestions, setSuggestions] = useState<MaterialSuggestion[]>(initialSuggestions);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -392,7 +395,7 @@ export default function MaterialOptimizationPage() {
             <Button
               variant="gradient"
               className="gap-2"
-              onClick={() => navigate("/design/workflow", { state: { concept } })}
+              onClick={() => navigate("/design/workflow", { state: { concept, workflowSteps } })}
             >
               <Save className="w-4 h-4" />
               Next

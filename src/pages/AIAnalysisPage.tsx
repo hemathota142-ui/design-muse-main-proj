@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Brain, Sparkles, Cpu, BarChart3, Lightbulb } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { useDesignDraft } from "@/contexts/DesignDraftContext";
+import { useToast } from "@/hooks/use-toast";
+import { generateDesignData } from "@/services/designGenerator.service";
 
 const analysisSteps = [
   { icon: Brain, label: "Understanding your requirements...", duration: 2000 },
@@ -14,41 +17,89 @@ const analysisSteps = [
 
 export default function AIAnalysisPage() {
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const { designDraft } = useDesignDraft();
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [isGenerating, setIsGenerating] = useState(true);
+  const [generatedOptions, setGeneratedOptions] = useState<any[] | null>(null);
 
   useEffect(() => {
+    if (!isGenerating) return;
     const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          return 100;
-        }
-        return prev + 1;
-      });
-    }, 95);
+      setProgress((prev) => Math.min(prev + 1, 92));
+    }, 140);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [isGenerating]);
 
   useEffect(() => {
-    if (currentStepIndex < analysisSteps.length - 1) {
-      const timer = setTimeout(() => {
-        setCurrentStepIndex((prev) => prev + 1);
-      }, analysisSteps[currentStepIndex].duration);
+    if (!isGenerating) return;
+    const timer = setTimeout(() => {
+      setCurrentStepIndex((prev) => (prev + 1) % analysisSteps.length);
+    }, analysisSteps[currentStepIndex].duration);
 
-      return () => clearTimeout(timer);
-    }
-  }, [currentStepIndex]);
+    return () => clearTimeout(timer);
+  }, [currentStepIndex, isGenerating]);
 
   useEffect(() => {
-    if (progress === 100) {
+    let isMounted = true;
+
+    const runGeneration = async () => {
+      try {
+        const payload = {
+          productType: (designDraft.customProductType || designDraft.productType || "").trim(),
+          purpose: designDraft.purpose,
+          targetUser: (designDraft.customTargetUser || designDraft.targetUser || "").trim(),
+          environment: (designDraft.customEnvironment || designDraft.environment || "").trim(),
+          skillLevel: designDraft.skillLevel,
+          budget: designDraft.budget,
+          timeWeeks: Array.isArray(designDraft.timeWeeks) ? designDraft.timeWeeks[0] ?? "" : designDraft.timeWeeks,
+          safetyRequirements: designDraft.safetyRequirements,
+          preferredMaterials: designDraft.preferredMaterials,
+          availableTools: designDraft.availableTools,
+          sustainabilityPriority: designDraft.sustainabilityPriority,
+        };
+
+        const result = await generateDesignData(payload);
+        if (!isMounted) return;
+        setGeneratedOptions(result.designOptions);
+      } catch (_error) {
+        if (!isMounted) return;
+        toast({
+          title: "Model generation delayed",
+          description: "Using fallback design options for now.",
+          variant: "destructive",
+        });
+      } finally {
+        if (!isMounted) return;
+        setIsGenerating(false);
+      }
+    };
+
+    runGeneration();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [designDraft, toast]);
+
+  useEffect(() => {
+    if (isGenerating) return;
+    if (progress < 100) {
       const timer = setTimeout(() => {
-        navigate("/design/concepts");
-      }, 500);
+        setProgress((prev) => Math.min(prev + 8, 100));
+      }, 40);
       return () => clearTimeout(timer);
     }
-  }, [progress, navigate]);
+
+    const timer = setTimeout(() => {
+      navigate("/design/concepts", {
+        state: generatedOptions ? { designOptions: generatedOptions } : undefined,
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [isGenerating, progress, navigate, generatedOptions]);
 
   const currentStep = analysisSteps[currentStepIndex];
 
