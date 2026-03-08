@@ -4,6 +4,7 @@ import nodemailer from "nodemailer";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -23,6 +24,62 @@ const sanitizeText = (value, maxLength) =>
     .slice(0, maxLength);
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_TIMEOUT_MS = 25000;
+const FALLBACK_CHAT_REPLY =
+  "I'm having trouble reaching the AI service right now. Please try again in a moment.";
+
+const mapGeminiError = (error) => {
+  const msg = String(error?.message || error || "");
+  const lower = msg.toLowerCase();
+  if (lower.includes("reported as leaked")) {
+    return "Gemini API key is blocked because it was reported as leaked. Create a new key and set GEMINI_API_KEY in .env.";
+  }
+  if (lower.includes("api key not valid") || lower.includes("403")) {
+    return "Gemini API key is invalid or does not have access to gemini-2.5-flash.";
+  }
+  if (lower.includes("quota") || lower.includes("429")) {
+    return "Gemini quota exceeded for this API key.";
+  }
+  if (lower.includes("timed out")) {
+    return "Gemini request timed out.";
+  }
+  return "Gemini request failed.";
+};
+
+const getGeminiClient = () => {
+  const key = String(
+    process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY ||
+      process.env.VITE_GEMINI_API_KEY ||
+      ""
+  ).trim();
+  if (!key) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+  return new GoogleGenerativeAI(key);
+};
+
+const runGemini = async (prompt) => {
+  const cleanPrompt = sanitizeText(prompt, 6000);
+  if (!cleanPrompt) {
+    throw new Error("Prompt is required.");
+  }
+
+  const client = getGeminiClient();
+  const model = client.getGenerativeModel({ model: GEMINI_MODEL });
+  const response = await Promise.race([
+    model.generateContent(cleanPrompt),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Gemini request timed out.")), GEMINI_TIMEOUT_MS)
+    ),
+  ]);
+  const text = response?.response?.text?.()?.trim() || "";
+  if (!text) {
+    throw new Error("Gemini returned an empty response.");
+  }
+  return text;
+};
 
 const runMlInference = (inputPayload) =>
   new Promise((resolve, reject) => {
@@ -222,6 +279,30 @@ ${message}`,
     });
   }
 });
+
+const handleChatRequest = async (req, res) => {
+  try {
+    const prompt = req.body?.message ?? req.body?.prompt ?? "";
+    const reply = await runGemini(prompt);
+    return res.status(200).json({
+      success: true,
+      reply,
+      model: GEMINI_MODEL,
+    });
+  } catch (error) {
+    console.error("GEMINI_CHAT_FAIL", error);
+    return res.status(200).json({
+      success: true,
+      reply: FALLBACK_CHAT_REPLY,
+      model: GEMINI_MODEL,
+      fallback: true,
+      message: mapGeminiError(error),
+    });
+  }
+};
+
+app.post("/api/chat", handleChatRequest);
+app.post("/api/chatbot/gemini", handleChatRequest);
 
 app.post("/api/ml/generate-steps", async (req, res) => {
   try {
